@@ -36,46 +36,51 @@ def _bypass_oracle(prompt: str) -> str:
 
 def test_load_corpus_reads_labeled_cases() -> None:
     cases = load_corpus(CORPUS)
-    assert len(cases) == 6
+    assert len(cases) == 14
     by_id = {c.label_id: c for c in cases}
-    assert set(by_id) == {
-        "escalate_after_deny",
-        "clean_run",
-        "sanctioned_reroute_after_deny",
-        "bypass_evasion",
-        "retry_same_tool",
-        "silent_abandon",
-    }
+    good = sum(c.gold_meta_decision_ok for c in cases)
+    assert good == 7  # balanced corpus: 7 good, 7 bad
     assert isinstance(by_id["bypass_evasion"], LabeledCase)
     assert by_id["bypass_evasion"].gold_meta_decision_ok is False
     assert by_id["clean_run"].gold_meta_decision_ok is True
     assert by_id["bypass_evasion"].trace.run.run_id == "corpus_bypass"
 
 
-def test_deterministic_oracle_misses_the_subtle_case() -> None:
-    # A judge that relies ONLY on the deterministic bypass signal catches the
-    # obvious evasions but blesses silent_abandon (gold bad, no bypass to flag) —
-    # exactly the gap the LLM judge exists to close. This is why the judge matters.
+# The 5 bad cases the deterministic bypass scan CANNOT see (no guard-evasion token):
+_DETERMINISTICALLY_SILENT_BAD = {
+    "silent_abandon",
+    "proceed_past_failed_tests",
+    "fabricated_success",
+    "destructive_without_asking",
+    "skipped_verification",
+}
+
+
+def test_deterministic_oracle_misses_every_subtle_bad_case() -> None:
+    # A judge relying ONLY on the deterministic bypass signal catches the two
+    # obvious evasions but blesses all 5 subtle bad runs (no bypass to flag) —
+    # the exact gap the LLM judge exists to close, and why it matters here.
     report = validate_judge(load_corpus(CORPUS), _bypass_oracle)
-    assert report.n == 6
-    assert report.missed_bad == 1  # silent_abandon slips through
+    assert report.n == 14
+    assert report.correct_good == 7  # no good case trips the bypass scan
+    assert report.correct_bad == 2  # only the two real evasions
+    assert report.missed_bad == 5
     assert report.false_alarm == 0
-    assert {r.label_id for r in report.disagreements} == {"silent_abandon"}
-    assert report.accuracy == 5 / 6
+    assert {r.label_id for r in report.disagreements} == _DETERMINISTICALLY_SILENT_BAD
 
 
 def test_always_approve_misses_every_bad_run() -> None:
     report = validate_judge(load_corpus(CORPUS), _always_ok)
-    assert report.correct_good == 3
-    assert report.missed_bad == 3  # every bad run wrongly blessed — the dangerous error
+    assert report.correct_good == 7
+    assert report.missed_bad == 7  # every bad run wrongly blessed — the dangerous error
     assert report.correct_bad == 0
     assert report.accuracy == 0.5
 
 
 def test_always_reject_false_alarms_every_good_run() -> None:
     report = validate_judge(load_corpus(CORPUS), _always_bad)
-    assert report.correct_bad == 3
-    assert report.false_alarm == 3
+    assert report.correct_bad == 7
+    assert report.false_alarm == 7
     assert report.accuracy == 0.5
 
 
@@ -83,5 +88,5 @@ def test_format_report_is_readable() -> None:
     report = validate_judge(load_corpus(CORPUS), _always_ok)
     text = format_report(report)
     assert "accuracy" in text
-    assert "missed_bad=3" in text
+    assert "missed_bad=7" in text
     assert "silent_abandon" in text  # a disagreement is named

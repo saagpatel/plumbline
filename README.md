@@ -27,8 +27,8 @@ Google ADK). The gap is the **intersection** none of them fills:
 
 | Phase | Deliverable | State |
 |---|---|---|
-| **0** | **Trace schema + JSON Schema + a worked example** | **this repo** |
-| 1 | Thin Claude Code recorder: `*.jsonl` → Plumbline trace (with a PII scrubber) | next |
+| **0** | Trace schema + JSON Schema + a worked example | shipped |
+| **1** | **Thin Claude Code recorder: `*.jsonl` → Plumbline trace (with a PII scrubber)** | **this branch** |
 | 2 | Offline decision-path scorer (composes existing trajectory metrics + a calibration judge) | planned |
 | 3 | CI gate (bare exit code) + an OTel `semantic-conventions-genai` extension proposal | planned |
 
@@ -43,6 +43,20 @@ Validate the example against the schema:
 ```sh
 uvx check-jsonschema --schemafile schema/plumbline-trace.schema.json examples/example-run.plumbline.json
 ```
+
+## Recording a Claude Code session (Phase 1)
+
+Normalize a real Claude Code transcript into a Plumbline trace — PII-scrubbed by default:
+
+```sh
+uv run plumbline record path/to/<session>.jsonl -o run.plumbline.json --validate
+```
+
+Subagent sidechains at `<session>/subagents/agent-*.jsonl` are merged automatically and
+tagged by their `agentId`; the result validates against the Phase 0 schema. Pass `--no-scrub`
+for local-only inspection. The recorder captures the *observable* execution layer (llm turns,
+tool calls, subagent dispatch, hook verdicts, mode changes, compaction) — `decision`-kind
+steps are a Phase 2 scoring concern, inferred from this path, not recorded here.
 
 ## Design stance
 

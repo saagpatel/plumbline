@@ -34,8 +34,8 @@ class PRF:
     f1: float
 
 
-def _prf(matched: int, pred_total: int, ref_total: int) -> PRF:
-    """Build a PRF from match counts.
+def f1_from_counts(matched: int, pred_total: int, ref_total: int) -> PRF:
+    """Build a PRF from pooled match counts — the shared primitive for every F1.
 
     Convention: empty-vs-empty is perfect (1,1,1) — nothing expected, nothing
     done. Either side empty while the other is non-empty is (0,0,0): an
@@ -58,7 +58,7 @@ def _multiset_matched(pred: Sequence[Hashable], ref: Sequence[Hashable]) -> int:
 
 def node_f1(pred: Sequence[Hashable], ref: Sequence[Hashable]) -> PRF:
     """Tool-selection F1 over the node multiset (order-independent)."""
-    return _prf(_multiset_matched(pred, ref), len(pred), len(ref))
+    return f1_from_counts(_multiset_matched(pred, ref), len(pred), len(ref))
 
 
 def _edges(seq: Sequence[Hashable]) -> list[tuple[Hashable, Hashable]]:
@@ -69,7 +69,7 @@ def _edges(seq: Sequence[Hashable]) -> list[tuple[Hashable, Hashable]]:
 def edge_f1(pred: Sequence[Hashable], ref: Sequence[Hashable]) -> PRF:
     """Ordering F1 over the multiset of consecutive-pair edges."""
     pred_edges, ref_edges = _edges(pred), _edges(ref)
-    return _prf(_multiset_matched(pred_edges, ref_edges), len(pred_edges), len(ref_edges))
+    return f1_from_counts(_multiset_matched(pred_edges, ref_edges), len(pred_edges), len(ref_edges))
 
 
 def edit_distance(pred: Sequence[Hashable], ref: Sequence[Hashable]) -> int:

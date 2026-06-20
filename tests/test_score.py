@@ -78,3 +78,55 @@ def test_single_step_wrong_tool_is_not_inflated() -> None:
     card = score(t, wrong, subagent_id="agent_rev1")
     assert card.ordering_informative is False
     assert _approx(card.overall, 0.0)
+
+
+def test_param_name_is_none_when_no_case_specifies_args() -> None:
+    # A reference path of bare tool names doesn't grade parameters.
+    t = Trace.from_json_file(EXAMPLE)
+    case = Case(case_id="names-only", reference_path=(RefNode(tool="Read"),))
+    assert score(t, case, subagent_id="agent_rev1").param_name is None
+
+
+def test_param_name_perfect_when_expected_keys_present() -> None:
+    # Expected arg keys match the realized calls' keys (values are ignored, which
+    # is what makes param-name scrubbing-immune).
+    t = Trace.from_json_file(EXAMPLE)
+    case = Case(
+        case_id="keys",
+        reference_path=(
+            RefNode(tool="Read", args={"file_path": "anything"}),
+            RefNode(tool="agent:code-reviewer"),
+            RefNode(tool="Bash", args={"command": "anything"}),
+            RefNode(tool="Edit", args={"file_path": "anything"}),
+            RefNode(tool="Bash", args={"command": "anything"}),
+        ),
+    )
+    card = score(t, case)
+    assert card.param_name is not None
+    assert _approx(card.param_name.f1, 1.0)
+
+
+def test_param_name_penalizes_missing_expected_key() -> None:
+    # The realized Edit carries only {file_path}; the case expects an old_string too.
+    t = Trace.from_json_file(EXAMPLE)
+    case = Case(
+        case_id="missing-key",
+        reference_path=(RefNode(tool="Edit", args={"file_path": "x", "old_string": "y"}),),
+    )
+    card = score(t, case)
+    assert card.param_name is not None
+    assert _approx(card.param_name.precision, 1.0)  # the one key it passed was wanted
+    assert _approx(card.param_name.recall, 0.5)  # 1 of 2 expected keys present
+
+
+def test_param_name_zero_when_expected_call_absent() -> None:
+    # A case node with args that never matches a realized call: its expected keys
+    # are all missed (recall 0), no actual keys to be precise about.
+    t = Trace.from_json_file(EXAMPLE)
+    case = Case(
+        case_id="absent",
+        reference_path=(RefNode(tool="Write", args={"file_path": "x"}),),
+    )
+    card = score(t, case)
+    assert card.param_name is not None
+    assert _approx(card.param_name.f1, 0.0)

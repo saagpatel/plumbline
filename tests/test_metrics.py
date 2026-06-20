@@ -6,7 +6,14 @@ the trace model, so they pin the metric *definitions* before any plumbing exists
 
 import math
 
-from plumbline.scorer.metrics import PRF, edge_f1, edit_distance, edit_similarity, node_f1
+from plumbline.scorer.metrics import (
+    PRF,
+    edge_f1,
+    edit_distance,
+    edit_similarity,
+    f1_from_counts,
+    node_f1,
+)
 
 
 def _approx(a: float, b: float) -> bool:
@@ -51,6 +58,20 @@ def test_node_f1_both_empty_is_perfect() -> None:
 
 def test_node_f1_pred_empty_ref_nonempty_is_zero() -> None:
     assert node_f1([], ["Read"]) == PRF(0.0, 0.0, 0.0)
+
+
+# --- f1_from_counts: the shared pooled-count PRF primitive ------------------
+
+
+def test_f1_from_counts_partial() -> None:
+    # 3 matched, 4 predicted, 6 expected -> P=0.75, R=0.5.
+    s = f1_from_counts(3, 4, 6)
+    assert _approx(s.precision, 0.75)
+    assert _approx(s.recall, 0.5)
+
+
+def test_f1_from_counts_empty_vs_empty_is_perfect() -> None:
+    assert f1_from_counts(0, 0, 0) == PRF(1.0, 1.0, 1.0)
 
 
 # --- edge_f1: order via the consecutive-pair (bigram) multiset --------------

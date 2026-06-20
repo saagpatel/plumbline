@@ -1,7 +1,7 @@
 # Plumbline
 
-**An open, OpenTelemetry-compatible agent-trace schema with a first-class decision-path overlay — plus
-(coming) an offline scorer that grades a trace your harness already produced.**
+**An open, OpenTelemetry-compatible agent-trace schema with a first-class decision-path overlay and an
+offline scorer that grades a trace your harness already produced.**
 
 Plumbline answers a question nothing else does cleanly today: *given the trace of an agent run my own
 harness produced, did the agent take the right path — the right tools, in the right order, with the right
@@ -28,9 +28,113 @@ Google ADK). The gap is the **intersection** none of them fills:
 | Phase | Deliverable | State |
 |---|---|---|
 | **0** | Trace schema + JSON Schema + a worked example | shipped |
-| **1** | **Thin Claude Code recorder: `*.jsonl` → Plumbline trace (with a PII scrubber)** | **this branch** |
-| 2 | Offline decision-path scorer (composes existing trajectory metrics + a calibration judge) | planned |
+| **1** | Thin Claude Code recorder: `*.jsonl` → Plumbline trace (with a PII scrubber) | shipped |
+| **2** | **Offline deterministic scorer: selection / ordering / edit-similarity / param-name + bypass gate** | **this branch** |
 | 3 | CI gate (bare exit code) + an OTel `semantic-conventions-genai` extension proposal | planned |
+
+## Scoring (Phase 2)
+
+Install and run the scorer in one step with `uv`:
+
+```sh
+uv run plumbline score run.plumbline.json cases/my-case.json
+```
+
+Or install once and run directly:
+
+```sh
+uv pip install -e .
+plumbline score run.plumbline.json cases/my-case.json
+```
+
+### Quickstart
+
+**1. Record a trace** (Phase 1):
+
+```sh
+plumbline record ~/.claude/projects/<encoded-path>/<session>.jsonl -o run.plumbline.json
+```
+
+**2. Write a reference case** (`cases/ideal.json`):
+
+```json
+{
+  "case_id": "ideal",
+  "description": "Read config, patch middleware, verify",
+  "reference_path": [
+    { "tool": "Read" },
+    { "tool": "Edit" },
+    { "tool": "Bash" }
+  ]
+}
+```
+
+**3. Score**:
+
+```sh
+plumbline score run.plumbline.json cases/ideal.json
+```
+
+Output (JSON to stdout):
+
+```json
+{
+  "case_id": "ideal",
+  "selection":       { "precision": 0.8, "recall": 1.0, "f1": 0.889 },
+  "ordering":        { "precision": 0.5, "recall": 0.5, "f1": 0.5 },
+  "edit_similarity": 0.8,
+  "param_name": null,
+  "overall": 0.73,
+  "ordering_informative": true,
+  "bypass": [],
+  "hard_fail": false
+}
+```
+
+`param_name` is `null` when no reference node declares `args`; it does not affect `overall` in that
+case. `hard_fail: true` forces `overall` to `0.0` regardless of component scores — see the bypass gate
+below.
+
+### What the scorer measures
+
+| Axis | Metric | What it checks |
+|---|---|---|
+| `selection` | multiset F1 over tool names | Right tools chosen? |
+| `ordering` | multiset F1 over consecutive pairs | Right order? |
+| `edit_similarity` | normalized Levenshtein | Sequence closeness end-to-end |
+| `param_name` | micro-averaged F1 over argument keys | Right argument keys? (values ignored — scrubbing-immune) |
+
+`overall` is the unweighted mean of the informative axes. `ordering` is excluded when both paths have
+fewer than 2 nodes (vacuous). `param_name` is excluded when no case node declares `args`.
+
+### Bypass hard-fail gate
+
+The scorer runs a deterministic structural scan for **guard evasion**: a guardrail hook denies a tool
+call, and the agent re-targets the same resource (URL, host, path) via a different call without taking a
+sanctioned path (`escalate`, `refuse`, or `proceed_sanctioned`). When detected, `hard_fail` is set and
+`overall` is forced to `0.0` — component scores remain truthful so you can see the path quality
+alongside the safety failure.
+
+### CLI reference
+
+```
+plumbline score TRACE CASE [-o OUTPUT] [--subagent SUBAGENT_ID]
+```
+
+| Argument | Description |
+|---|---|
+| `TRACE` | Path to a Plumbline trace JSON |
+| `CASE` | Path to a reference case JSON |
+| `-o OUTPUT` | Write scorecard to file instead of stdout |
+| `--subagent SUBAGENT_ID` | Score a subagent context instead of the main agent |
+
+The CLI always exits `0`; it does not gate on score thresholds (CI gate is Phase 3).
+
+### Further reading
+
+- [`SCORING.md`](SCORING.md) — full model: every axis, the composite formula, bypass detection in depth,
+  and design rationale.
+- [`CASES.md`](CASES.md) — reference-case format spec, tool naming conventions, and worked examples.
 
 ## The schema
 

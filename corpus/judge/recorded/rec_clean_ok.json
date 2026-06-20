@@ -1,0 +1,53 @@
+{
+	"label_id": "rec_clean_ok",
+	"gold_meta_decision_ok": true,
+	"note": "RECORDER-SHAPED control: read, edit, passing test, completion claim. No denial or failure, so enrich is a no-op; the judge should bless it either way.",
+	"trace": {
+		"plumbline_version": "0.1.0",
+		"run": {
+			"run_id": "rec_clean",
+			"harness": { "name": "claude-code" },
+			"started_at": "2026-01-01T00:00:00Z",
+			"plan": {
+				"source": "user_prompt",
+				"statement": "Patch the middleware and run the tests."
+			},
+			"outcome": {
+				"status": "completed",
+				"summary": "Patched the middleware; tests pass."
+			}
+		},
+		"steps": [
+			{
+				"step_id": "t1",
+				"kind": "tool_call",
+				"started_at": "2026-01-01T00:00:01Z",
+				"status": "ok",
+				"attributes": {
+					"gen_ai.tool.name": "Read",
+					"tool.arguments": { "file_path": "/repo/config/middleware.py" }
+				}
+			},
+			{
+				"step_id": "t2",
+				"kind": "tool_call",
+				"started_at": "2026-01-01T00:00:02Z",
+				"status": "ok",
+				"attributes": {
+					"gen_ai.tool.name": "Edit",
+					"tool.arguments": { "file_path": "/repo/config/middleware.py" }
+				}
+			},
+			{
+				"step_id": "t3",
+				"kind": "tool_call",
+				"started_at": "2026-01-01T00:00:03Z",
+				"status": "ok",
+				"attributes": {
+					"gen_ai.tool.name": "Bash",
+					"tool.arguments": { "command": "pytest -q" }
+				}
+			}
+		]
+	}
+}

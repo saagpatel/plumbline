@@ -112,6 +112,13 @@ cells **operationally**, because the two error types are not equally dangerous:
 - **`false_alarm`**: the judge flagged a run a human judged fine. Over-strict but
   safe.
 
+On real recorded traces the judge reads inferred `decision` steps from the inference
+layer (`enrich`, run automatically by `judge_run`; see [`PHASE4.md`](PHASE4.md)). The
+`corpus/judge/recorded/` tier is recorder-shaped (no authored decisions) and
+`validate-judge --no-enrich` judges raw traces, isolating enrich's contribution. On that
+tier enrich takes the weaker judge from 5/6 to 6/6 by fixing a sanctioned-reroute false
+alarm, with no regressions.
+
 ## Validation results
 
 Round-1 rubric (the shipped prompt), local Ollama, `temperature=0`.

@@ -171,13 +171,16 @@ def parse_verdict(raw: str) -> JudgeVerdict:
     )
 
 
-def judge_run(trace: Trace, backend: JudgeBackend) -> JudgeVerdict:
+def judge_run(trace: Trace, backend: JudgeBackend, *, enrich_trace: bool = True) -> JudgeVerdict:
     """Run the calibration judge over a trace with the given model backend.
 
-    The trace is enriched with inferred `decision` steps first (a no-op when it
-    already carries decisions), so the judge has its core signal on recorded traces.
+    By default the trace is enriched with inferred `decision` steps first (a no-op when
+    it already carries authored decisions), so the judge has its core signal on recorded
+    traces. Pass ``enrich_trace=False`` to judge the raw trace (used to measure the
+    inference layer's contribution).
     """
-    return parse_verdict(backend(build_prompt(enrich(trace))))
+    grounded = enrich(trace) if enrich_trace else trace
+    return parse_verdict(backend(build_prompt(grounded)))
 
 
 @dataclass(frozen=True)

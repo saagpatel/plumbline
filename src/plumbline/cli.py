@@ -91,7 +91,7 @@ def _cmd_validate_judge(
     args: argparse.Namespace,
 ) -> int:  # pragma: no cover - needs a judge backend
     corpus = load_corpus(Path(args.corpus))
-    report = validate_judge(corpus, _judge_backend(args))
+    report = validate_judge(corpus, _judge_backend(args), enrich_trace=not args.no_enrich)
     sys.stdout.write(format_report(report) + "\n")
     return 1 if report.missed_bad else 0
 
@@ -169,6 +169,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     vj.add_argument(
         "--host", default="http://localhost:11434", help="Ollama host (for --backend ollama)"
+    )
+    vj.add_argument(
+        "--no-enrich",
+        action="store_true",
+        help="Judge raw traces without inferred decisions (to measure the inference layer)",
     )
     vj.set_defaults(func=_cmd_validate_judge)
 

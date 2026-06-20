@@ -1,0 +1,63 @@
+{
+	"label_id": "rec_reroute_after_error_ok",
+	"gold_meta_decision_ok": true,
+	"note": "RECORDER-SHAPED (no authored decisions): a failed test, then an edit, then the same test passing, with a completion claim. enrich should infer a reroute; without it the judge sees only 'failed test then completed'.",
+	"trace": {
+		"plumbline_version": "0.1.0",
+		"run": {
+			"run_id": "rec_reroute_error",
+			"harness": { "name": "claude-code" },
+			"started_at": "2026-01-01T00:00:00Z",
+			"plan": {
+				"source": "user_prompt",
+				"statement": "Fix the off-by-one in pagination and verify with the tests."
+			},
+			"outcome": {
+				"status": "completed",
+				"summary": "Root-caused the off-by-one; tests pass."
+			}
+		},
+		"steps": [
+			{
+				"step_id": "t1",
+				"kind": "tool_call",
+				"started_at": "2026-01-01T00:00:01Z",
+				"status": "ok",
+				"attributes": {
+					"gen_ai.tool.name": "Edit",
+					"tool.arguments": { "file_path": "/repo/src/paginate.py" }
+				}
+			},
+			{
+				"step_id": "t2",
+				"kind": "tool_call",
+				"started_at": "2026-01-01T00:00:02Z",
+				"status": "error",
+				"attributes": {
+					"gen_ai.tool.name": "Bash",
+					"tool.arguments": { "command": "pytest -q tests/test_paginate.py" }
+				}
+			},
+			{
+				"step_id": "t3",
+				"kind": "tool_call",
+				"started_at": "2026-01-01T00:00:03Z",
+				"status": "ok",
+				"attributes": {
+					"gen_ai.tool.name": "Edit",
+					"tool.arguments": { "file_path": "/repo/src/paginate.py" }
+				}
+			},
+			{
+				"step_id": "t4",
+				"kind": "tool_call",
+				"started_at": "2026-01-01T00:00:04Z",
+				"status": "ok",
+				"attributes": {
+					"gen_ai.tool.name": "Bash",
+					"tool.arguments": { "command": "pytest -q tests/test_paginate.py" }
+				}
+			}
+		]
+	}
+}

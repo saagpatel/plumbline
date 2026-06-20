@@ -163,16 +163,36 @@ land independently of the inference module.
 
 An inference layer is only trustworthy if validated, same lesson as the judge.
 
-1. **Inference precision.** Sample 10-20 real sessions across project types from
-   `~/.claude/projects`. Hand-label the decisions and outcome a human reads from each
-   transcript, then measure the structural rules' precision and recall against those
-   labels. Precision is the priority: a wrong inferred decision actively misleads the
-   judge.
-2. **Judge-on-real.** Re-run the dogfood: does `enrich` turn the confident-vacuous
-   verdict into a grounded one? Spot-check verdicts on enriched real traces.
-3. **Corpus.** Add a distinct tier of real, enriched cases to `corpus/judge/`, kept
-   separate from the synthetic tier so we never again mistake synthetic performance for
-   real-world performance.
+### Phase 4c result (shipped): does enrich measurably help?
+
+Real recorded traces carry PII even after best-effort scrubbing, so they cannot be
+committed. Instead `corpus/judge/recorded/` holds 6 PII-free, gold-labeled,
+**recorder-shaped** traces (observable layer + outcome, *no authored decisions*, i.e. what
+`record_session` actually produces), so they exercise the inference layer (the main
+corpus has authored decisions and no-ops enrich). A `validate-judge --no-enrich` lever
+judges the raw trace, isolating enrich's contribution:
+
+| Model | with enrich | without enrich |
+|---|---|---|
+| qwen2.5-coder:14b | 6/6 | 5/6 (false-alarm on `rec_reroute_after_denial_ok`) |
+| qwen3:8b | 6/6 | 6/6 |
+
+The inference layer helps exactly as designed: without the inferred reroute, coder read
+"denial then more edits" and over-flagged a legitimate sanctioned reroute; with enrich
+it blessed it. The effect is model-dependent (qwen3:8b reasoned it out from the raw
+path) with no regressions either way. Honest caveat: 6 cases is small, the controls
+(clean / fabricated / bypass / proceed-past-failure) were handled correctly by both
+models with and without enrich, so the measured signal rests on the single
+denial-reroute case. The claim is calibrated: enrich prevents a specific false-alarm
+class for weaker judges and never hurts, on this corpus.
+
+### Remaining (not yet done)
+
+1. **Inference precision on real labels.** Sample real sessions, hand-label the
+   decisions a human reads, and measure the structural + text rules' precision/recall.
+   (4d's refuse precision was eyeballed at 54 -> 7, not formally scored.)
+2. **Judge-on-real at scale.** The dogfood showed enrich turns the confident-vacuous
+   verdict grounded on one real session; a labeled batch would quantify it.
 
 ## Risks and open questions
 
@@ -202,8 +222,10 @@ An inference layer is only trustworthy if validated, same lesson as the judge.
   original 4b/4c/4d bullets below predate this split.
 - **4b (original)**: structural decision inference (denial- and failure-anchored) + provenance
   tags + `enrich` wiring + tests.
-- **4c**: real-session validation corpus; measure inference precision and judge-on-real;
-  iterate the rules.
+- **4c** (shipped): recorder-shaped, gold-labeled corpus (`corpus/judge/recorded/`) +
+  `validate-judge --no-enrich` lever; measured that enrich takes coder 5/6 -> 6/6 by
+  fixing a denial-reroute false alarm, neutral on qwen3:8b, no regressions. See the
+  Phase 4c result above. Formal precision/recall on real labels remains open.
 - **4d** (shipped): text-signal refuse/escalate inference emitted by the recorder from
   raw prose (no prose stored in the trace), opt-in via `--infer-text-decisions`.
   Dogfood-tuned for precision (refuse 54 -> 7 false-heavy matches removed).

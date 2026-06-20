@@ -128,11 +128,17 @@ def format_report(report: ValidationReport) -> str:
     return "\n".join(lines)
 
 
-def validate_judge(corpus: Sequence[LabeledCase], backend: JudgeBackend) -> ValidationReport:
-    """Run the judge over each labeled case and tally agreement with gold."""
+def validate_judge(
+    corpus: Sequence[LabeledCase], backend: JudgeBackend, *, enrich_trace: bool = True
+) -> ValidationReport:
+    """Run the judge over each labeled case and tally agreement with gold.
+
+    ``enrich_trace=False`` judges raw traces (no inferred decisions), to measure the
+    inference layer's contribution against the enriched baseline.
+    """
     results = []
     for case in corpus:
-        verdict = judge_run(case.trace, backend)
+        verdict = judge_run(case.trace, backend, enrich_trace=enrich_trace)
         results.append(
             CaseResult(
                 label_id=case.label_id,

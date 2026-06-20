@@ -155,6 +155,59 @@ def test_ollama_backend_defaults_to_a_free_local_model() -> None:
     assert ":" in backend.model  # an ollama model tag, e.g. qwen2.5-coder:14b
 
 
+def test_judge_run_enriches_by_default_and_can_be_disabled() -> None:
+    # A decision-less reroute-after-error trace: enrich infers a reroute that should
+    # reach the prompt by default, and be absent when enrich is disabled.
+    trace = Trace.from_dict(
+        {
+            "plumbline_version": "0.1.0",
+            "run": {"run_id": "r", "harness": {"name": "x"}, "started_at": "2026-01-01T00:00:00Z"},
+            "steps": [
+                {
+                    "step_id": "t1",
+                    "kind": "tool_call",
+                    "started_at": "2026-01-01T00:00:01Z",
+                    "status": "error",
+                    "attributes": {
+                        "gen_ai.tool.name": "Bash",
+                        "tool.arguments": {"command": "pytest"},
+                    },
+                },
+                {
+                    "step_id": "t2",
+                    "kind": "tool_call",
+                    "started_at": "2026-01-01T00:00:02Z",
+                    "status": "ok",
+                    "attributes": {
+                        "gen_ai.tool.name": "Edit",
+                        "tool.arguments": {"file_path": "/x"},
+                    },
+                },
+                {
+                    "step_id": "t3",
+                    "kind": "tool_call",
+                    "started_at": "2026-01-01T00:00:03Z",
+                    "status": "ok",
+                    "attributes": {
+                        "gen_ai.tool.name": "Bash",
+                        "tool.arguments": {"command": "pytest"},
+                    },
+                },
+            ],
+        }
+    )
+    prompts: list[str] = []
+
+    def fake(prompt: str) -> str:
+        prompts.append(prompt)
+        return _GOOD
+
+    judge_run(trace, fake)
+    judge_run(trace, fake, enrich_trace=False)
+    assert "(inferred)" in prompts[0]  # reroute surfaced by enrich
+    assert "(inferred)" not in prompts[1]  # raw trace, no inferred decision
+
+
 def test_judge_run_passes_grounded_prompt_to_backend() -> None:
     captured: dict[str, str] = {}
 

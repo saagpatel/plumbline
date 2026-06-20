@@ -9,6 +9,7 @@ judge already receives.
 import json
 from pathlib import Path
 
+from plumbline.scorer.infer import enrich
 from plumbline.scorer.validate import (
     LabeledCase,
     format_report,
@@ -17,6 +18,7 @@ from plumbline.scorer.validate import (
 )
 
 CORPUS = Path(__file__).resolve().parent.parent / "corpus" / "judge"
+RECORDED = CORPUS / "recorded"
 
 
 def _always_ok(_prompt: str) -> str:
@@ -86,6 +88,24 @@ def test_always_reject_false_alarms_every_good_run() -> None:
     assert report.correct_bad == 10
     assert report.false_alarm == 10
     assert report.accuracy == 0.5
+
+
+def test_recorded_corpus_exercises_the_inference_layer() -> None:
+    # The recorded corpus is recorder-shaped (no authored decisions), so it actually
+    # exercises enrich — unlike the main corpus, where enrich is a no-op.
+    cases = {c.label_id: c for c in load_corpus(RECORDED)}
+    assert len(cases) == 6
+    for cid in ("rec_reroute_after_error_ok", "rec_reroute_after_denial_ok"):
+        enriched = enrich(cases[cid].trace)
+        kinds = [s.attributes["agent.decision.kind"] for s in enriched.steps_of_kind("decision")]
+        assert "reroute" in kinds, cid
+    for cid in ("rec_clean_ok", "rec_fabricated_bad", "rec_proceed_past_failed_tests_bad"):
+        assert enrich(cases[cid].trace).steps_of_kind("decision") == [], cid
+
+
+def test_main_corpus_is_unaffected_by_recorded_subdir() -> None:
+    # load_corpus is non-recursive; the recorded/ subdir must not change the main count.
+    assert len(load_corpus(CORPUS)) == 20
 
 
 def test_format_report_is_readable() -> None:

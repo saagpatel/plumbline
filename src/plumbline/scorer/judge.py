@@ -146,7 +146,11 @@ class AnthropicBackend:
     max_tokens: int = 4096
 
     def __call__(self, prompt: str) -> str:  # pragma: no cover - needs network + anthropic dep
-        import anthropic  # noqa: PLC0415  # ty: ignore[unresolved-import]
+        try:
+            import anthropic  # noqa: PLC0415  # ty: ignore[unresolved-import]
+        except ImportError as exc:
+            msg = "The Anthropic judge backend needs the extra: pip install 'plumbline[judge]'"
+            raise RuntimeError(msg) from exc
 
         client = anthropic.Anthropic()
         response = client.messages.create(

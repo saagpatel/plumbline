@@ -10,8 +10,10 @@ from pathlib import Path
 
 from plumbline.recorders.claude_code import record_session
 from plumbline.scorer.case import Case
+from plumbline.scorer.judge import AnthropicBackend
 from plumbline.scorer.score import score
 from plumbline.scorer.trace import Trace
+from plumbline.scorer.validate import format_report, load_corpus, validate_judge
 
 
 def _find_schema() -> Path | None:
@@ -67,6 +69,15 @@ def _cmd_score(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_validate_judge(
+    args: argparse.Namespace,
+) -> int:  # pragma: no cover - needs [judge] + network
+    corpus = load_corpus(Path(args.corpus))
+    report = validate_judge(corpus, AnthropicBackend(model=args.model))
+    sys.stdout.write(format_report(report) + "\n")
+    return 1 if report.missed_bad else 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="plumbline", description="Plumbline trace tooling")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -95,6 +106,16 @@ def main(argv: list[str] | None = None) -> int:
         help="Minimum overall score to pass --gate (default 0.0: only a bypass fails)",
     )
     sc.set_defaults(func=_cmd_score)
+
+    vj = sub.add_parser(
+        "validate-judge",
+        help="Run the calibration judge over a labeled corpus and report agreement",
+    )
+    vj.add_argument("corpus", help="Path to a directory of labeled case JSON files")
+    vj.add_argument(
+        "--model", default="claude-opus-4-8", help="Judge model (Anthropic backend; needs [judge])"
+    )
+    vj.set_defaults(func=_cmd_validate_judge)
 
     args = parser.parse_args(argv)
     return int(args.func(args))

@@ -110,6 +110,24 @@ def load_corpus(directory: Path) -> list[LabeledCase]:
     return cases
 
 
+def format_report(report: ValidationReport) -> str:
+    """Render a validation report as a readable text summary."""
+    lines = [
+        f"judge validation: {report.agreements}/{report.n} agree (accuracy {report.accuracy:.3f})",
+        f"  correct_good={report.correct_good}  correct_bad={report.correct_bad}",
+        f"  false_alarm={report.false_alarm}  missed_bad={report.missed_bad}"
+        "  <- missed_bad is the dangerous error",
+    ]
+    if report.disagreements:
+        lines.append("  disagreements:")
+        lines.extend(
+            f"    - {r.label_id}: gold={r.gold} predicted={r.predicted} "
+            f"({'missed_bad' if r.predicted else 'false_alarm'}, conf={r.confidence:.2f})"
+            for r in report.disagreements
+        )
+    return "\n".join(lines)
+
+
 def validate_judge(corpus: Sequence[LabeledCase], backend: JudgeBackend) -> ValidationReport:
     """Run the judge over each labeled case and tally agreement with gold."""
     results = []

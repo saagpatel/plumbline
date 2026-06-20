@@ -9,6 +9,11 @@ requires-python = ">=3.11"
 # is trivial to embed in any harness. Validation/test tooling lives in groups.
 dependencies = []
 
+# Opt-in extra: the reference Anthropic judge backend. The core never imports it;
+# `pip install plumbline[judge]` enables scorer.judge.AnthropicBackend.
+[project.optional-dependencies]
+judge = ["anthropic"]
+
 [project.scripts]
 plumbline = "plumbline.cli:main"
 

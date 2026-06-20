@@ -1,6 +1,6 @@
 [project]
 name = "plumbline"
-version = "0.1.0"
+version = "0.2.0"
 description = "Open, OTel-compatible agent-trace schema + offline decision-path recorder/scorer for coding-agent harnesses"
 readme = "README.md"
 license = "MIT"

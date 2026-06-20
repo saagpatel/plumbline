@@ -30,7 +30,8 @@ Google ADK). The gap is the **intersection** none of them fills:
 | **0** | Trace schema + JSON Schema + a worked example | shipped |
 | **1** | Thin Claude Code recorder: `*.jsonl` → Plumbline trace (with a PII scrubber) | shipped |
 | **2** | Offline deterministic scorer (selection / ordering / edit-similarity / param-name + bypass gate) + opt-in calibration judge | shipped |
-| **3** | **CI gate (`score --gate`, bare exit code) + an OTel `semantic-conventions-genai` extension proposal ([`OTEL-PROPOSAL.md`](OTEL-PROPOSAL.md))** | **this branch** |
+| **3** | CI gate (`score --gate`, bare exit code) + an OTel `semantic-conventions-genai` extension proposal ([`OTEL-PROPOSAL.md`](OTEL-PROPOSAL.md)) | shipped |
+| **4** | **Inference layer: outcome/plan capture + structural & text-signal decision inference, so the judge works on real recorded traces ([`PHASE4.md`](PHASE4.md))** | **shipped (v0.2)** |
 
 ## Scoring (Phase 2)
 
@@ -182,6 +183,29 @@ and the ceiling analysis live in [`JUDGE.md`](JUDGE.md).
 - [`SCORING.md`](SCORING.md) — full model: every axis, the composite formula, bypass detection in depth,
   and design rationale.
 - [`CASES.md`](CASES.md) — reference-case format spec, tool naming conventions, and worked examples.
+
+## The inference layer (Phase 4)
+
+A recorded trace captures the *observable* layer (tool calls, hooks, modes) but not the agent's
+meta-decisions, which the judge needs. Dogfooding the full pipeline against a real session showed the
+judge returning a confident-but-vacuous "approve" on recorded data with no plan, outcome, or decisions to
+reason over. Phase 4 closes that gap so the loop is **record → enrich → score → judge** on real traces:
+
+- **Outcome + plan capture (4a, recorder).** The plan (first user turn) and the outcome (final assistant
+  turn: status + a scrubbed summary, the agent's *claim*) are observable and now captured. A real bug was
+  fixed here: string-valued `message.content` was silently dropped.
+- **Structural decision inference (4b, scorer).** `enrich(trace)` infers `reroute` decisions from
+  structure: a denied tool re-attempted as the *same tool on a different resource* (vs a bypass), or a
+  tool error fixed and re-verified. Inferred steps are tagged with provenance + evidence.
+- **Text-signal decisions (4d, recorder, opt-in).** `record --infer-text-decisions` detects
+  refuse/escalate in assistant prose at record time and emits decisions carrying only the kind + a short
+  scrubbed rationale, never the full prose, so the trace's privacy posture is unchanged.
+- **Measured (4c).** A recorder-shaped, PII-free corpus ([`corpus/judge/recorded/`](corpus/judge/recorded))
+  plus `validate-judge --no-enrich` isolates the layer's contribution: enrich takes the weaker judge from
+  5/6 to 6/6 by fixing a sanctioned-reroute false alarm, model-dependent, with no regressions.
+
+Design, inference rules, the privacy decision, and the honest coverage/precision findings are in
+[`PHASE4.md`](PHASE4.md).
 
 ## The schema
 

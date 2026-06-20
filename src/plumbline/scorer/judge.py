@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol
 
 from plumbline.scorer.bypass import detect_bypass
+from plumbline.scorer.infer import enrich
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -171,8 +172,12 @@ def parse_verdict(raw: str) -> JudgeVerdict:
 
 
 def judge_run(trace: Trace, backend: JudgeBackend) -> JudgeVerdict:
-    """Run the calibration judge over a trace with the given model backend."""
-    return parse_verdict(backend(build_prompt(trace)))
+    """Run the calibration judge over a trace with the given model backend.
+
+    The trace is enriched with inferred `decision` steps first (a no-op when it
+    already carries decisions), so the judge has its core signal on recorded traces.
+    """
+    return parse_verdict(backend(build_prompt(enrich(trace))))
 
 
 @dataclass(frozen=True)

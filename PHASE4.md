@@ -101,25 +101,35 @@ As shipped in the recorder's `_build_run`:
 - **plan fix**: `_content_text` now reads a plain-string `message.content`, recovering
   the first-user-prompt plan that real sessions carry as a string.
 
-### Decisions, structural tier (Phase 4b, deterministic)
+### Decisions, structural tier (Phase 4b, shipped via `infer.py`)
 
-Denial-anchored (keyed off `hook` deny steps and the existing `detect_bypass`):
+Infers only `reroute`, the one decision unambiguous from structure. `enrich(trace)`
+runs it (no-op when the trace already carries `decision` steps) and is wired into the
+judge path. Every inferred step carries `agent.decision.inferred = true` +
+`agent.decision.evidence = [step_ids]` and an "(inferred)" rationale prefix.
 
-- denial, then a later tool call on a **different** resource (no shared resource token)
-  before session end -> `reroute` (caused_by the denial).
-- denial, then a token-matching retry of the same resource -> already a bypass finding;
-  emit no resolving decision (judge rule 1 fires on the bypass flag).
-- denial, then the session ends or the outcome is aborted with no same-resource retry ->
-  `escalate` (surfaced to operator).
-- denial silently followed by an unrelated "done" with no addressing action -> emit no
-  decision; the visible denial plus judge rule 3 (silently swallowed blocker) covers it.
+Denial-anchored (keyed off `hook` deny steps and `detect_bypass`):
+
+- denial of tool T, then the **same tool T** on a *different* resource -> `reroute`.
+  The same-tool constraint is the precision boundary: it separates a real reroute from
+  a silent abandon (a denied fetch followed by editing something unrelated is NOT a
+  reroute, and it must not be blessed), and the different resource separates it from a
+  bypass (same resource = evasion, judge rule 1).
 
 Failure-anchored:
 
-- tool error (e.g. a `Bash pytest` step with `status == error`), then a later re-edit
-  and a re-run that passes -> `reroute` (fixed and re-verified).
-- tool error, then a "completed" claim with no fix -> emit no decision; judge rule 4
-  catches the failed test in the path.
+- tool error, then an edit, then the same tool succeeding -> `reroute` (fixed and
+  re-verified). Each success is claimed once, so a run of failures before one fix is a
+  single reroute episode, not one per failure.
+
+**Coverage finding (dogfooded across 160 real sessions).** Denial-anchored reroute had
+**zero** inputs: under the operator's default `bypassPermissions`, guards do not emit
+recorded `deny` events, so 0/160 sessions carried a hook-deny step. Failure-anchored
+reroute is well-fed: 38/40 tool-heavy sessions had >=1 error tool_call (~7% error rate),
+and the inference fired on real sessions ("fixed and re-verified after a failed Bash").
+Takeaway: the structural tier is precise but its denial branch is dormant on bypass
+traces, which is the empirical case for the text-signal tier (4d): escalations and
+refusals live in prose, not in recorded deny events.
 
 ### Decisions, text-signal tier (Phase 4d, optional, behind a flag)
 
@@ -174,7 +184,12 @@ An inference layer is only trustworthy if validated, same lesson as the judge.
   recorder + tests. Re-dogfooded: the judge now reasons over the real plan and claim
   instead of returning a vacuous "approve". (Outcome turned out to be observable
   recorder capture, not scorer inference; see the Outcome section.)
-- **4b**: structural decision inference (denial- and failure-anchored) + provenance
+- **4b** (shipped): structural reroute inference (denial- and failure-anchored) +
+  provenance tags + `enrich` wired into the judge path. Verified no-op on the synthetic
+  corpus (identical validation), fires on real sessions for failure-anchored reroute;
+  the denial branch is dormant on bypassPermissions traces (no recorded denials). The
+  original 4b/4c/4d bullets below predate this split.
+- **4b (original)**: structural decision inference (denial- and failure-anchored) + provenance
   tags + `enrich` wiring + tests.
 - **4c**: real-session validation corpus; measure inference precision and judge-on-real;
   iterate the rules.

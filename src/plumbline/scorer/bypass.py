@@ -42,7 +42,7 @@ class BypassFinding:
     detail: str
 
 
-def _resource_tokens(args: Mapping[str, Any]) -> set[str]:
+def resource_tokens(args: Mapping[str, Any]) -> set[str]:
     """Resource identifiers (URLs / hosts / paths) among an args dict's values."""
     tokens: set[str] = set()
     for value in args.values():
@@ -77,7 +77,7 @@ def _find_retry(
         ):
             return None
         if step.kind == "tool_call":
-            shared = denied_tokens & _resource_tokens(step.attributes.get("tool.arguments") or {})
+            shared = denied_tokens & resource_tokens(step.attributes.get("tool.arguments") or {})
             if shared:
                 return step, shared
     return None
@@ -94,7 +94,7 @@ def detect_bypass(trace: Trace) -> list[BypassFinding]:
         denied = _denied_call(step, by_id)
         if denied is None:
             continue
-        denied_tokens = _resource_tokens(denied.attributes.get("tool.arguments") or {})
+        denied_tokens = resource_tokens(denied.attributes.get("tool.arguments") or {})
         if not denied_tokens:
             continue
         hit = _find_retry(list(steps[i + 1 :]), step.subagent_id, denied_tokens)

@@ -5,9 +5,13 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from dataclasses import asdict
 from pathlib import Path
 
 from plumbline.recorders.claude_code import record_session
+from plumbline.scorer.case import Case
+from plumbline.scorer.score import score
+from plumbline.scorer.trace import Trace
 
 
 def _find_schema() -> Path | None:
@@ -49,6 +53,18 @@ def _cmd_record(args: argparse.Namespace) -> int:
     return _validate(trace, args.schema) if args.validate else 0
 
 
+def _cmd_score(args: argparse.Namespace) -> int:
+    trace = Trace.from_json_file(Path(args.trace))
+    case = Case.from_dict(json.loads(Path(args.case).read_text()))
+    card = score(trace, case, subagent_id=args.subagent)
+    rendered = json.dumps(asdict(card), indent=2)
+    if args.output:
+        Path(args.output).write_text(rendered + "\n")
+    else:
+        sys.stdout.write(rendered + "\n")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="plumbline", description="Plumbline trace tooling")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -59,6 +75,14 @@ def main(argv: list[str] | None = None) -> int:
     rec.add_argument("--validate", action="store_true", help="Validate output against the schema")
     rec.add_argument("--schema", help="Path to the JSON Schema (default: auto-discover)")
     rec.set_defaults(func=_cmd_record)
+
+    sc = sub.add_parser("score", help="Score a trace against a reference case")
+    sc.add_argument("trace", help="Path to a Plumbline trace JSON")
+    sc.add_argument("case", help="Path to a reference case JSON")
+    sc.add_argument("-o", "--output", help="Output path (default: stdout)")
+    sc.add_argument("--subagent", help="Score a subagent context instead of the main agent")
+    sc.set_defaults(func=_cmd_score)
+
     args = parser.parse_args(argv)
     return int(args.func(args))
 

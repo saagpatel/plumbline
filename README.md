@@ -29,8 +29,8 @@ Google ADK). The gap is the **intersection** none of them fills:
 |---|---|---|
 | **0** | Trace schema + JSON Schema + a worked example | shipped |
 | **1** | Thin Claude Code recorder: `*.jsonl` → Plumbline trace (with a PII scrubber) | shipped |
-| **2** | **Offline deterministic scorer: selection / ordering / edit-similarity / param-name + bypass gate** | **this branch** |
-| 3 | CI gate (bare exit code) + an OTel `semantic-conventions-genai` extension proposal | planned |
+| **2** | Offline deterministic scorer (selection / ordering / edit-similarity / param-name + bypass gate) + opt-in calibration judge | shipped |
+| **3** | **CI gate (`score --gate`, bare exit code) + an OTel `semantic-conventions-genai` extension proposal ([`OTEL-PROPOSAL.md`](OTEL-PROPOSAL.md))** | **this branch** |
 
 ## Scoring (Phase 2)
 
@@ -118,7 +118,7 @@ alongside the safety failure.
 ### CLI reference
 
 ```
-plumbline score TRACE CASE [-o OUTPUT] [--subagent SUBAGENT_ID]
+plumbline score TRACE CASE [-o OUTPUT] [--subagent SUBAGENT_ID] [--gate] [--min-overall FLOAT]
 ```
 
 | Argument | Description |
@@ -127,8 +127,38 @@ plumbline score TRACE CASE [-o OUTPUT] [--subagent SUBAGENT_ID]
 | `CASE` | Path to a reference case JSON |
 | `-o OUTPUT` | Write scorecard to file instead of stdout |
 | `--subagent SUBAGENT_ID` | Score a subagent context instead of the main agent |
+| `--gate` | Exit non-zero on gate failure (a bypass hard-fail, or `overall < --min-overall`) |
+| `--min-overall FLOAT` | Minimum `overall` to pass `--gate` (default `0.0`: only a bypass fails) |
 
-The CLI always exits `0`; it does not gate on score thresholds (CI gate is Phase 3).
+### CI gate (Phase 3)
+
+`--gate` turns the scorecard into a bare exit code for CI — the card still prints (so the log shows
+*why*), but a failing run exits `1`:
+
+```sh
+# Fail the build on guard evasion only:
+plumbline score run.plumbline.json cases/ideal.json --gate
+# Also require a minimum path-quality score:
+plumbline score run.plumbline.json cases/ideal.json --gate --min-overall 0.7
+```
+
+## Calibration judge (opt-in)
+
+Beyond the deterministic axes, an opt-in **calibration judge** (OPERANT axis-3) grades the *meta-decision*:
+given the situation, was the agent's choice the right one? It's trace-grounded (it reasons over the path,
+the guardrail denials, and the deterministic bypass findings) and the zero-dep core stays offline — the
+judge takes any `(prompt) -> str` backend, so you bring your own model. A reference Anthropic backend
+lives behind the `judge` extra:
+
+```sh
+uv pip install -e ".[judge]"
+```
+
+**Validate the judge before trusting it.** An unvalidated judge is decoration — on hard cases it can
+disagree with humans on a majority of runs. `plumbline.scorer.validate` runs the judge over a labeled
+corpus ([`corpus/judge/`](corpus/judge)) and reports agreement, naming the dangerous error explicitly
+(`missed_bad`: the judge blessed a run a human judged bad). Grow the corpus with subtle cases the
+deterministic gate can't catch, then measure.
 
 ### Further reading
 

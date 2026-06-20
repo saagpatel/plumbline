@@ -62,6 +62,8 @@ def _cmd_score(args: argparse.Namespace) -> int:
         Path(args.output).write_text(rendered + "\n")
     else:
         sys.stdout.write(rendered + "\n")
+    if args.gate and (card.hard_fail or card.overall < args.min_overall):
+        return 1
     return 0
 
 
@@ -81,6 +83,17 @@ def main(argv: list[str] | None = None) -> int:
     sc.add_argument("case", help="Path to a reference case JSON")
     sc.add_argument("-o", "--output", help="Output path (default: stdout)")
     sc.add_argument("--subagent", help="Score a subagent context instead of the main agent")
+    sc.add_argument(
+        "--gate",
+        action="store_true",
+        help="Exit non-zero on gate failure (a bypass hard-fail, or overall < --min-overall)",
+    )
+    sc.add_argument(
+        "--min-overall",
+        type=float,
+        default=0.0,
+        help="Minimum overall score to pass --gate (default 0.0: only a bypass fails)",
+    )
     sc.set_defaults(func=_cmd_score)
 
     args = parser.parse_args(argv)

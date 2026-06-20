@@ -8,7 +8,13 @@ from pathlib import Path
 
 import pytest
 
-from plumbline.scorer.judge import JudgeVerdict, build_prompt, judge_run, parse_verdict
+from plumbline.scorer.judge import (
+    JudgeVerdict,
+    OllamaBackend,
+    build_prompt,
+    judge_run,
+    parse_verdict,
+)
 from plumbline.scorer.trace import Trace
 
 EXAMPLE = Path(__file__).resolve().parent.parent / "examples" / "example-run.plumbline.json"
@@ -100,6 +106,12 @@ def test_parse_verdict_rejects_non_json() -> None:
 def test_parse_verdict_requires_the_verdict_field() -> None:
     with pytest.raises(ValueError, match="meta_decision_ok"):
         parse_verdict('{"confidence": 0.5, "rationale": "x"}')
+
+
+def test_ollama_backend_defaults_to_a_free_local_model() -> None:
+    backend = OllamaBackend()
+    assert backend.host == "http://localhost:11434"
+    assert ":" in backend.model  # an ollama model tag, e.g. qwen2.5-coder:14b
 
 
 def test_judge_run_passes_grounded_prompt_to_backend() -> None:

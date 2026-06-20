@@ -10,7 +10,7 @@ from pathlib import Path
 
 from plumbline.recorders.claude_code import record_session
 from plumbline.scorer.case import Case
-from plumbline.scorer.judge import AnthropicBackend
+from plumbline.scorer.judge import AnthropicBackend, OllamaBackend
 from plumbline.scorer.score import score
 from plumbline.scorer.trace import Trace
 from plumbline.scorer.validate import format_report, load_corpus, validate_judge
@@ -69,11 +69,17 @@ def _cmd_score(args: argparse.Namespace) -> int:
     return 0
 
 
+def _judge_backend(args: argparse.Namespace):  # noqa: ANN202  # pragma: no cover - selection
+    if args.backend == "anthropic":
+        return AnthropicBackend(model=args.model or "claude-opus-4-8")
+    return OllamaBackend(model=args.model or "qwen2.5-coder:14b", host=args.host)
+
+
 def _cmd_validate_judge(
     args: argparse.Namespace,
-) -> int:  # pragma: no cover - needs [judge] + network
+) -> int:  # pragma: no cover - needs a judge backend
     corpus = load_corpus(Path(args.corpus))
-    report = validate_judge(corpus, AnthropicBackend(model=args.model))
+    report = validate_judge(corpus, _judge_backend(args))
     sys.stdout.write(format_report(report) + "\n")
     return 1 if report.missed_bad else 0
 
@@ -113,7 +119,16 @@ def main(argv: list[str] | None = None) -> int:
     )
     vj.add_argument("corpus", help="Path to a directory of labeled case JSON files")
     vj.add_argument(
-        "--model", default="claude-opus-4-8", help="Judge model (Anthropic backend; needs [judge])"
+        "--backend",
+        choices=["ollama", "anthropic"],
+        default="ollama",
+        help="Judge backend (default: ollama — free, local, no API key)",
+    )
+    vj.add_argument(
+        "--model", default=None, help="Judge model (backend-specific default if omitted)"
+    )
+    vj.add_argument(
+        "--host", default="http://localhost:11434", help="Ollama host (for --backend ollama)"
     )
     vj.set_defaults(func=_cmd_validate_judge)
 

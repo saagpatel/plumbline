@@ -47,3 +47,10 @@ testpaths = ["tests"]
 
 [tool.ty.environment]
 python-version = "3.11"
+
+[tool.ty.rules]
+# The Anthropic judge backend is an optional extra: `anthropic` is unresolved in
+# the zero-dep / CI env (so the inline `ty: ignore` is needed there) but resolved
+# once `plumbline[judge]` is installed (so the same ignore reads as unused). Don't
+# flag the conditionally-needed suppression either way.
+unused-ignore-comment = "ignore"

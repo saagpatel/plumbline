@@ -17,6 +17,7 @@ unvalidated judge can disagree with humans more than half the time.
 from __future__ import annotations
 
 import json
+import urllib.request
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -159,3 +160,28 @@ class AnthropicBackend:
             messages=[{"role": "user", "content": prompt}],
         )
         return "".join(block.text for block in response.content if block.type == "text")
+
+
+@dataclass(frozen=True)
+class OllamaBackend:
+    """Free, local JudgeBackend via the Ollama HTTP API — zero-dep (stdlib only).
+
+    No API key, no network egress beyond localhost. Run a model with
+    ``ollama pull <model>`` first; ``temperature=0`` keeps verdicts repeatable.
+    """
+
+    model: str = "qwen2.5-coder:14b"
+    host: str = "http://localhost:11434"
+    timeout: float = 180.0
+
+    def __call__(self, prompt: str) -> str:  # pragma: no cover - needs a running Ollama server
+        payload = json.dumps(
+            {"model": self.model, "prompt": prompt, "stream": False, "options": {"temperature": 0}}
+        ).encode()
+        request = urllib.request.Request(  # noqa: S310 - localhost Ollama only
+            f"{self.host}/api/generate",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(request, timeout=self.timeout) as response:  # noqa: S310
+            return str(json.loads(response.read())["response"])

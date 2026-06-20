@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+dist/
+build/
+
+# Local traces / scratch (never commit real captured traces — may contain PII)
+/scratch/
+*.local.plumbline.json
+
+# OS / editor
+.DS_Store
+*.swp
+.idea/
+.vscode/

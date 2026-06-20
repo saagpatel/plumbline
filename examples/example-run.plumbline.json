@@ -1,0 +1,270 @@
+{
+	"plumbline_version": "0.1.0",
+	"run": {
+		"run_id": "run_synthetic_0001",
+		"harness": {
+			"name": "claude-code",
+			"version": "2.x",
+			"entrypoint": "cli"
+		},
+		"started_at": "2026-06-19T17:00:00Z",
+		"ended_at": "2026-06-19T17:04:12Z",
+		"model": "claude-opus-4-8",
+		"workspace": {
+			"cwd": "/repo",
+			"git_branch": "feat/rate-limit"
+		},
+		"plan": {
+			"source": "approved_plan",
+			"statement": "Add a rate-limit guard to the public API and verify it with the test suite.",
+			"items": [
+				{
+					"id": "p1",
+					"text": "Read the current API entrypoint",
+					"status": "completed"
+				},
+				{
+					"id": "p2",
+					"text": "Add rate-limit middleware via the sanctioned config path",
+					"status": "completed"
+				},
+				{
+					"id": "p3",
+					"text": "Run the test suite to verify",
+					"status": "completed"
+				}
+			]
+		},
+		"outcome": {
+			"status": "completed",
+			"summary": "Rate-limit middleware added through config; tests green. One egress attempt was blocked by a guard and escalated."
+		}
+	},
+	"steps": [
+		{
+			"step_id": "s1",
+			"parent_step_id": null,
+			"kind": "mode_change",
+			"started_at": "2026-06-19T17:00:01Z",
+			"attributes": {
+				"harness.mode.kind": "permission_mode",
+				"harness.mode.from": "default",
+				"harness.mode.to": "acceptEdits"
+			}
+		},
+		{
+			"step_id": "s2",
+			"parent_step_id": "s1",
+			"kind": "llm",
+			"started_at": "2026-06-19T17:00:02Z",
+			"ended_at": "2026-06-19T17:00:09Z",
+			"status": "ok",
+			"attributes": {
+				"gen_ai.request.model": "claude-opus-4-8",
+				"gen_ai.usage.input_tokens": 1840,
+				"gen_ai.usage.output_tokens": 220,
+				"gen_ai.response.finish_reasons": ["tool_use"],
+				"agent.reasoning": true
+			}
+		},
+		{
+			"step_id": "s3",
+			"parent_step_id": "s2",
+			"kind": "tool_call",
+			"started_at": "2026-06-19T17:00:10Z",
+			"ended_at": "2026-06-19T17:00:10Z",
+			"status": "ok",
+			"attributes": {
+				"gen_ai.tool.name": "Read",
+				"gen_ai.tool.call.id": "call_read_1",
+				"tool.arguments": { "file_path": "/repo/src/api.py" },
+				"tool.result.kind": "read"
+			}
+		},
+		{
+			"step_id": "s4",
+			"parent_step_id": "s2",
+			"caused_by": "s3",
+			"kind": "decision",
+			"started_at": "2026-06-19T17:00:11Z",
+			"attributes": {
+				"agent.decision.kind": "proceed_sanctioned",
+				"agent.decision.rationale": "The public API is a guarded surface; route the change through the sanctioned config path rather than editing the entrypoint directly.",
+				"agent.decision.on_plan": true,
+				"agent.decision.plan_ref": "p2"
+			}
+		},
+		{
+			"step_id": "s5",
+			"parent_step_id": "s2",
+			"kind": "agent",
+			"started_at": "2026-06-19T17:00:12Z",
+			"ended_at": "2026-06-19T17:01:30Z",
+			"status": "ok",
+			"attributes": {
+				"agent.type": "code-reviewer",
+				"agent.name": "reviewer",
+				"agent.model": "claude-sonnet-4-6",
+				"agent.spawns_subagent_id": "agent_rev1"
+			}
+		},
+		{
+			"step_id": "s6",
+			"parent_step_id": "s5",
+			"subagent_id": "agent_rev1",
+			"kind": "llm",
+			"started_at": "2026-06-19T17:00:20Z",
+			"ended_at": "2026-06-19T17:00:34Z",
+			"status": "ok",
+			"attribution": { "agent": "code-reviewer" },
+			"attributes": {
+				"gen_ai.request.model": "claude-sonnet-4-6",
+				"gen_ai.usage.input_tokens": 900,
+				"gen_ai.usage.output_tokens": 140,
+				"gen_ai.response.finish_reasons": ["tool_use"]
+			}
+		},
+		{
+			"step_id": "s7",
+			"parent_step_id": "s6",
+			"subagent_id": "agent_rev1",
+			"kind": "tool_call",
+			"started_at": "2026-06-19T17:00:35Z",
+			"ended_at": "2026-06-19T17:00:35Z",
+			"status": "ok",
+			"attribution": { "agent": "code-reviewer" },
+			"attributes": {
+				"gen_ai.tool.name": "Read",
+				"gen_ai.tool.call.id": "call_read_2",
+				"tool.arguments": { "file_path": "/repo/config/middleware.py" },
+				"tool.result.kind": "read"
+			}
+		},
+		{
+			"step_id": "s8",
+			"parent_step_id": "s7",
+			"subagent_id": "agent_rev1",
+			"kind": "llm",
+			"started_at": "2026-06-19T17:00:36Z",
+			"ended_at": "2026-06-19T17:01:28Z",
+			"status": "ok",
+			"attribution": { "agent": "code-reviewer" },
+			"attributes": {
+				"gen_ai.request.model": "claude-sonnet-4-6",
+				"gen_ai.usage.input_tokens": 1100,
+				"gen_ai.usage.output_tokens": 310,
+				"gen_ai.response.finish_reasons": ["end_turn"]
+			}
+		},
+		{
+			"step_id": "s9",
+			"parent_step_id": "s2",
+			"kind": "tool_call",
+			"started_at": "2026-06-19T17:01:40Z",
+			"ended_at": "2026-06-19T17:01:40Z",
+			"status": "interrupted",
+			"attributes": {
+				"gen_ai.tool.name": "Bash",
+				"gen_ai.tool.call.id": "call_bash_1",
+				"tool.arguments": {
+					"command": "curl https://rate-limit-rules.example.com/defaults"
+				},
+				"tool.result.kind": "bash"
+			}
+		},
+		{
+			"step_id": "s10",
+			"parent_step_id": "s2",
+			"caused_by": "s9",
+			"kind": "hook",
+			"started_at": "2026-06-19T17:01:40Z",
+			"attributes": {
+				"harness.hook.name": "bash-egress-guard",
+				"harness.hook.event": "PreToolUse",
+				"harness.hook.verdict": "deny",
+				"harness.hook.prevented_continuation": true,
+				"harness.hook.target_step_id": "s9",
+				"harness.hook.reason": "Outbound network egress to a non-allowlisted host."
+			}
+		},
+		{
+			"step_id": "s11",
+			"parent_step_id": "s2",
+			"caused_by": "s10",
+			"kind": "decision",
+			"started_at": "2026-06-19T17:01:41Z",
+			"attributes": {
+				"agent.decision.kind": "escalate",
+				"agent.decision.rationale": "Egress was guard-denied. Do not seek a bypass; surface to the operator and use a local default instead.",
+				"agent.decision.on_plan": true
+			}
+		},
+		{
+			"step_id": "s12",
+			"parent_step_id": "s2",
+			"kind": "memory",
+			"started_at": "2026-06-19T17:01:50Z",
+			"attribution": { "skill": "bank" },
+			"attributes": {
+				"harness.memory.op": "write",
+				"harness.memory.scope": "project",
+				"harness.memory.key": "lessons/egress-guard-blocks-curl"
+			}
+		},
+		{
+			"step_id": "s13",
+			"parent_step_id": "s2",
+			"kind": "tool_call",
+			"started_at": "2026-06-19T17:02:30Z",
+			"ended_at": "2026-06-19T17:02:30Z",
+			"status": "ok",
+			"attributes": {
+				"gen_ai.tool.name": "Edit",
+				"gen_ai.tool.call.id": "call_edit_1",
+				"tool.arguments": { "file_path": "/repo/config/middleware.py" },
+				"tool.result.kind": "edit",
+				"tool.result.user_modified": false
+			}
+		},
+		{
+			"step_id": "s14",
+			"parent_step_id": "s2",
+			"kind": "tool_call",
+			"started_at": "2026-06-19T17:03:05Z",
+			"ended_at": "2026-06-19T17:03:58Z",
+			"status": "ok",
+			"attributes": {
+				"gen_ai.tool.name": "Bash",
+				"gen_ai.tool.call.id": "call_bash_2",
+				"tool.arguments": { "command": "pytest -q tests/test_rate_limit.py" },
+				"tool.result.kind": "bash",
+				"tool.result.exit_code": 0
+			}
+		},
+		{
+			"step_id": "s15",
+			"parent_step_id": "s2",
+			"kind": "compaction",
+			"started_at": "2026-06-19T17:04:00Z",
+			"attributes": {
+				"harness.compaction.reason": "auto",
+				"harness.compaction.tokens_before": 142000,
+				"harness.compaction.tokens_after": 38000
+			}
+		},
+		{
+			"step_id": "s16",
+			"parent_step_id": "s15",
+			"kind": "llm",
+			"started_at": "2026-06-19T17:04:05Z",
+			"ended_at": "2026-06-19T17:04:12Z",
+			"status": "ok",
+			"attributes": {
+				"gen_ai.request.model": "claude-opus-4-8",
+				"gen_ai.usage.input_tokens": 38500,
+				"gen_ai.usage.output_tokens": 180,
+				"gen_ai.response.finish_reasons": ["end_turn"]
+			}
+		}
+	]
+}

@@ -16,6 +16,7 @@ Real transcripts vary in shape; the recorder is defensive about it (see
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -28,6 +29,24 @@ _SUMMARY_MAX = 600  # cap the observed outcome summary so a trace stays bounded
 # Final-turn stop_reason -> outcome status. Only an explicit end_turn is a claimed
 # completion; everything else stays conservative ("unknown") rather than guessing.
 _STOP_REASON_STATUS = {"end_turn": "completed"}
+
+# Phase 4d text-signal decision detection. Opt-in (the lowest-precision tier): scans
+# assistant prose for refuse/escalate language at record time and emits decision steps
+# carrying only the kind + a short scrubbed rationale snippet, never the full prose.
+_RATIONALE_MAX = 120
+# First-person, declining-an-action forms only. Bare "won't" / "refuse" / "declined"
+# appear constantly in narrative prose, so require "I [refuse/decline] to ..." or
+# "I won't/will not <action verb>" to keep precision up on the lowest-precision tier.
+_REFUSE_RE = re.compile(
+    r"(?i)\bi(?:'m| am)? (?:(?:refuse|decline|declining) to"
+    r"|(?:won['’]t|will not) (?:be )?(?:do|run|delete|drop|remove|push|execute"  # noqa: RUF001
+    r"|touch|modify|make|create|change|proceed|implement|add))"
+)
+_ESCALATE_RE = re.compile(
+    r"(?i)(?:could you clarify|can you clarify|please clarify|did you mean"
+    r"|need (?:your )?confirmation|wait(?:ing)? for (?:your )?(?:approval|confirmation)"
+    r"|before (?:i|you) proceed)"
+)
 
 # Tool name -> a coarse tool.result.kind tag (typed-result detail lives in args).
 _RESULT_KIND = {
@@ -65,11 +84,17 @@ def _subagent_files(main_path: Path) -> list[Path]:
     return sorted(sub_dir.glob("*.jsonl")) if sub_dir.is_dir() else []
 
 
-def record_session(main_path: Path | str, *, scrub: bool = True) -> JsonObj:  # noqa: C901, PLR0912 - linear event dispatcher; clearer flat than split
+def record_session(  # noqa: C901, PLR0912 - linear event dispatcher; clearer flat than split
+    main_path: Path | str, *, scrub: bool = True, infer_text_decisions: bool = False
+) -> JsonObj:
     """Normalize a Claude Code session (main + subagents) into a Plumbline trace.
 
     PII scrubbing is ON by default (see `plumbline.scrub`); pass ``scrub=False`` to
     keep raw values (e.g. for local-only inspection).
+
+    ``infer_text_decisions`` (opt-in, Phase 4d) scans assistant prose for refuse/escalate
+    language and emits `decision` steps carrying only the kind + a short scrubbed
+    rationale; it never stores the full prose. Lowest-precision tier, off by default.
     """
     main_path = Path(main_path)
     events = load_jsonl(main_path)
@@ -110,6 +135,9 @@ def record_session(main_path: Path | str, *, scrub: bool = True) -> JsonObj:  # 
             mode_seq += 1
             step, last_mode = _mode_step(ev, etype, last_mode, mode_seq, ts)
             steps.append(step)
+
+    if infer_text_decisions:
+        steps.extend(_text_decision_steps(events))
 
     # Stable sort: equal timestamps keep insertion (≈ event) order.
     steps.sort(key=lambda s: s["started_at"])
@@ -285,6 +313,55 @@ def _content_text(ev: JsonObj) -> str | None:
         if isinstance(block, dict) and block.get("type") == "text" and block.get("text")
     ]
     return "\n".join(parts) or None
+
+
+def _classify_text_decision(text: str) -> tuple[str, str] | None:
+    """Detect a refuse/escalate meta-decision in assistant prose -> (kind, snippet).
+
+    Returns a short snippet around the match (never the full prose); ``None`` if no
+    high-signal phrase is present. Refuse takes priority over escalate.
+    """
+    for kind, pattern in (("refuse", _REFUSE_RE), ("escalate", _ESCALATE_RE)):
+        match = pattern.search(text)
+        if match:
+            start = max(0, match.start() - 30)
+            snippet = text[start : match.end() + 70].strip()
+            return kind, snippet[:_RATIONALE_MAX]
+    return None
+
+
+def _text_decision_steps(events: list[JsonObj]) -> list[JsonObj]:
+    """Phase 4d: decision steps inferred from assistant prose (opt-in, best-effort)."""
+    steps: list[JsonObj] = []
+    for idx, ev in enumerate(events):
+        if ev.get("type") != "assistant":
+            continue
+        text = _content_text(ev)
+        if not text:
+            continue
+        found = _classify_text_decision(text)
+        if found is None:
+            continue
+        kind, snippet = found
+        uuid = ev.get("uuid")
+        steps.append(
+            {
+                "step_id": f"textdec_{idx}",
+                "parent_step_id": ev.get("parentUuid"),
+                "subagent_id": ev.get("agentId") if ev.get("isSidechain") else None,
+                "kind": "decision",
+                "started_at": ev.get("timestamp") or _EPOCH,
+                "caused_by": uuid,
+                "attributes": {
+                    "agent.decision.kind": kind,
+                    "agent.decision.rationale": f"(inferred from agent text) {snippet}",
+                    "agent.decision.inferred": True,
+                    "agent.decision.source": "text_signal",
+                    "agent.decision.evidence": [uuid] if uuid else [],
+                },
+            }
+        )
+    return steps
 
 
 def _build_run(events: list[JsonObj]) -> JsonObj:

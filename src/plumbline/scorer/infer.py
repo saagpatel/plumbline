@@ -146,10 +146,17 @@ def infer_decisions(trace: Trace) -> list[Step]:
 def enrich(trace: Trace) -> Trace:
     """Return ``trace`` augmented with inferred decisions, in timestamp order.
 
-    No-op when the trace already carries `decision` steps (authored/synthetic traces
-    are trusted as-is) or when nothing is inferable.
+    No-op when the trace carries authored/observed `decision` steps (trusted as-is) or
+    when nothing is inferable. Inferred decisions (e.g. Phase 4d text-signal steps,
+    tagged ``agent.decision.inferred``) do NOT block structural inference, so the two
+    tiers compose.
     """
-    if trace.steps_of_kind("decision"):
+    authored = [
+        s
+        for s in trace.steps_of_kind("decision")
+        if not s.attributes.get("agent.decision.inferred")
+    ]
+    if authored:
         return trace
     inferred = infer_decisions(trace)
     if not inferred:

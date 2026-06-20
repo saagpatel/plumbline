@@ -163,6 +163,27 @@ def test_enrich_is_noop_when_decisions_already_present() -> None:
     assert len(enriched.steps_of_kind("decision")) == 1
 
 
+def test_enrich_still_infers_structural_over_inferred_text_decisions() -> None:
+    # A trace carrying an INFERRED text decision (4d) must not block structural
+    # reroute inference (4b); only authored/observed decisions do.
+    trace = _trace(
+        [
+            {
+                "step_id": "td1",
+                "kind": "decision",
+                "started_at": "...005",
+                "attributes": {"agent.decision.kind": "refuse", "agent.decision.inferred": True},
+            },
+            _tool("t1", "Bash", {"command": "pytest -q"}, "...01", status="error"),
+            _tool("t2", "Edit", {"file_path": "/repo/src/x.py"}, "...02"),
+            _tool("t3", "Bash", {"command": "pytest -q"}, "...03"),
+        ]
+    )
+    enriched = enrich(trace)
+    kinds = sorted(s.attributes["agent.decision.kind"] for s in enriched.steps_of_kind("decision"))
+    assert kinds == ["refuse", "reroute"]  # text decision kept, structural reroute added
+
+
 def test_enrich_adds_inferred_decisions_in_timestamp_order() -> None:
     trace = _trace(
         [

@@ -229,6 +229,72 @@ def test_string_tool_use_result_does_not_crash(tmp_path: Path) -> None:
     assert tool_call["status"] == "ok"
 
 
+def _decision_session(tmp_path: Path, text: str) -> Path:
+    sess = tmp_path / "s.jsonl"
+    lines = [
+        {
+            "type": "user",
+            "uuid": "u1",
+            "parentUuid": None,
+            "sessionId": "x",
+            "timestamp": "2026-06-19T00:00:00Z",
+            "message": {"content": "do the thing and also drop the prod database"},
+        },
+        {
+            "type": "assistant",
+            "uuid": "a1",
+            "parentUuid": "u1",
+            "sessionId": "x",
+            "timestamp": "2026-06-19T00:00:01Z",
+            "message": {
+                "model": "m",
+                "stop_reason": "end_turn",
+                "content": [{"type": "text", "text": text}],
+            },
+        },
+    ]
+    sess.write_text("\n".join(json.dumps(line) for line in lines) + "\n")
+    return sess
+
+
+def test_text_decisions_off_by_default(tmp_path: Path) -> None:
+    sess = _decision_session(tmp_path, "I'm declining to drop the production database.")
+    trace = record_session(sess)
+    assert steps_of_kind(trace, "decision") == []
+
+
+def test_text_decision_infers_refuse(tmp_path: Path) -> None:
+    sess = _decision_session(tmp_path, "I'm declining to drop the production database; flagged it.")
+    trace = record_session(sess, infer_text_decisions=True)
+    decisions = steps_of_kind(trace, "decision")
+    assert len(decisions) == 1
+    attrs = decisions[0]["attributes"]
+    assert attrs["agent.decision.kind"] == "refuse"
+    assert attrs["agent.decision.inferred"] is True
+    assert attrs["agent.decision.source"] == "text_signal"
+    assert attrs["agent.decision.evidence"] == ["a1"]
+    assert "(inferred" in attrs["agent.decision.rationale"]
+    assert len(attrs["agent.decision.rationale"]) <= 160  # bounded; no full prose
+
+
+def test_text_decision_infers_escalate(tmp_path: Path) -> None:
+    sess = _decision_session(
+        tmp_path, "Could you clarify whether the limit is per-user or global before I proceed?"
+    )
+    trace = record_session(sess, infer_text_decisions=True)
+    decisions = steps_of_kind(trace, "decision")
+    assert len(decisions) == 1
+    assert decisions[0]["attributes"]["agent.decision.kind"] == "escalate"
+
+
+def test_text_decision_no_false_positive_on_plain_turn(tmp_path: Path) -> None:
+    sess = _decision_session(
+        tmp_path, "I read the entrypoint and edited the middleware; tests pass."
+    )
+    trace = record_session(sess, infer_text_decisions=True)
+    assert steps_of_kind(trace, "decision") == []
+
+
 def test_cli_validate_returns_nonzero_on_invalid_trace() -> None:
     # Mixed-level errors (run-level + multiple step-level) must not crash the sort.
     bad = {

@@ -131,15 +131,26 @@ Takeaway: the structural tier is precise but its denial branch is dormant on byp
 traces, which is the empirical case for the text-signal tier (4d): escalations and
 refusals live in prose, not in recorded deny events.
 
-### Decisions, text-signal tier (Phase 4d, optional, behind a flag)
+### Decisions, text-signal tier (Phase 4d, shipped, opt-in)
 
-- late assistant text matching refusal patterns ("I won't", "I can't", "declined",
-  "out of scope", "destructive") -> `refuse`.
-- assistant text matching clarification patterns ("could you clarify", "did you mean",
-  "ambiguous", "I'll flag this") with an aborted outcome -> `escalate`.
+Architecture (operator decision): assistant prose only the recorder sees is scanned at
+record time; the recorder emits `decision` steps carrying the kind + a short scrubbed
+rationale snippet (<=120 chars), and NEVER stores the full prose. The portable trace's
+privacy posture is unchanged. Opt-in via `record --infer-text-decisions` (off by
+default; lowest-precision tier). Every emitted step carries `agent.decision.inferred`,
+`agent.decision.source = "text_signal"`, and an evidence id. `enrich`'s gate was
+narrowed so these inferred decisions do NOT block structural (4b) inference: the two
+tiers compose.
 
-This tier is heuristic, validated separately, and shipped only behind an explicit flag
-with a clear confidence tag. The structural tier must stand on its own without it.
+- first-person, declining-an-action prose -> `refuse`.
+- clarification / wait-for-approval / before-I-proceed prose -> `escalate`.
+
+Precision finding (dogfooded, 30 real sessions). The first cut keyed on bare
+"won't" / "refuse" / "declined" and fired 54 false-heavy refuses (narrative prose, not
+meta-decisions). Tightening to first-person declining-an-action forms ("I refuse/decline
+to ...", "I won't <action verb>") cut that to 7 genuine refuses; escalate stayed at 5
+and was clean from the start. The tier remains heuristic and opt-in; provenance tags let
+the judge weight it as derived, and the structural tier stands on its own without it.
 
 ## Plan capture fix (Phase 4a, separable)
 
@@ -193,4 +204,6 @@ An inference layer is only trustworthy if validated, same lesson as the judge.
   tags + `enrich` wiring + tests.
 - **4c**: real-session validation corpus; measure inference precision and judge-on-real;
   iterate the rules.
-- **4d** (optional): text-signal decision inference behind a flag, validated separately.
+- **4d** (shipped): text-signal refuse/escalate inference emitted by the recorder from
+  raw prose (no prose stored in the trace), opt-in via `--infer-text-decisions`.
+  Dogfood-tuned for precision (refuse 54 -> 7 false-heavy matches removed).

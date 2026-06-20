@@ -46,7 +46,11 @@ def _validate(trace: dict, schema_arg: str | None) -> int:
 
 
 def _cmd_record(args: argparse.Namespace) -> int:
-    trace = record_session(Path(args.input), scrub=not args.no_scrub)
+    trace = record_session(
+        Path(args.input),
+        scrub=not args.no_scrub,
+        infer_text_decisions=args.infer_text_decisions,
+    )
     rendered = json.dumps(trace, indent=2)
     if args.output:
         Path(args.output).write_text(rendered + "\n")
@@ -99,6 +103,12 @@ def main(argv: list[str] | None = None) -> int:
     rec.add_argument("input", help="Path to the main Claude Code session .jsonl")
     rec.add_argument("-o", "--output", help="Output path (default: stdout)")
     rec.add_argument("--no-scrub", action="store_true", help="Do not scrub PII from the trace")
+    rec.add_argument(
+        "--infer-text-decisions",
+        action="store_true",
+        help="Opt-in: emit refuse/escalate decisions inferred from assistant prose "
+        "(kind + short scrubbed rationale only; lowest-precision tier)",
+    )
     rec.add_argument("--validate", action="store_true", help="Validate output against the schema")
     rec.add_argument("--schema", help="Path to the JSON Schema (default: auto-discover)")
     rec.set_defaults(func=_cmd_record)

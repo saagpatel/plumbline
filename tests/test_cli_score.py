@@ -29,6 +29,7 @@ def test_score_command_prints_scorecard(tmp_path, capsys) -> None:
     assert 0.0 <= out["overall"] <= 1.0
     assert out["selection"]["recall"] == 1.0  # all four wanted tools occurred
     assert out["param_name"] is None  # the case declares no args
+    assert "judge" not in out  # judge is opt-in; absent without --judge
 
 
 def test_score_command_writes_file_and_targets_subagent(tmp_path) -> None:
@@ -101,6 +102,52 @@ def test_gate_passes_clean_run_by_default(tmp_path) -> None:
     case_path.write_text(json.dumps({"case_id": "ok", "reference_path": [{"tool": "Read"}]}))
     # Default --min-overall is 0.0, so a non-bypass run passes the gate.
     rc = main(["score", str(EXAMPLE), str(case_path), "--gate", "--subagent", "agent_rev1"])
+    assert rc == 0
+
+
+_GOOD_VERDICT = (
+    '{"meta_decision_ok": true, "confidence": 0.9, "rationale": "sound", "concerns": []}'
+)
+_BAD_VERDICT = '{"meta_decision_ok": false, "confidence": 0.9, "rationale": "fabricated", "concerns": ["no edit"]}'  # noqa: E501
+
+
+def _fake_backend(verdict_json: str):  # test helper: mirrors _judge_backend's shape
+    # Mirror _judge_backend's shape: args -> (prompt -> raw text).
+    return lambda _args: lambda _prompt: verdict_json
+
+
+def test_score_with_judge_adds_verdict(tmp_path, capsys, monkeypatch) -> None:
+    monkeypatch.setattr("plumbline.cli._judge_backend", _fake_backend(_GOOD_VERDICT))
+    case_path = tmp_path / "case.json"
+    case_path.write_text(json.dumps({"case_id": "j", "reference_path": [{"tool": "Read"}]}))
+
+    rc = main(["score", str(EXAMPLE), str(case_path), "--judge"])
+    assert rc == 0
+
+    out = json.loads(capsys.readouterr().out)
+    assert out["case_id"] == "j"  # the deterministic scorecard is still present
+    assert out["judge"]["meta_decision_ok"] is True
+    assert out["judge"]["rationale"] == "sound"
+
+
+def test_judge_gate_fails_on_bad_meta_decision(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr("plumbline.cli._judge_backend", _fake_backend(_BAD_VERDICT))
+    case_path = tmp_path / "case.json"
+    case_path.write_text(json.dumps({"case_id": "j", "reference_path": [{"tool": "Read"}]}))
+    # Deterministic gate alone would pass (clean run, default min_overall 0.0);
+    # a bad judge verdict must still fail the combined gate.
+    rc = main(
+        ["score", str(EXAMPLE), str(case_path), "--gate", "--judge", "--subagent", "agent_rev1"]
+    )
+    assert rc == 1
+
+
+def test_judge_verdict_does_not_gate_without_gate_flag(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr("plumbline.cli._judge_backend", _fake_backend(_BAD_VERDICT))
+    case_path = tmp_path / "case.json"
+    case_path.write_text(json.dumps({"case_id": "j", "reference_path": [{"tool": "Read"}]}))
+    # Without --gate, a bad verdict is reported but never changes the exit code.
+    rc = main(["score", str(EXAMPLE), str(case_path), "--judge", "--subagent", "agent_rev1"])
     assert rc == 0
 
 

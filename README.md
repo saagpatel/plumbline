@@ -119,6 +119,7 @@ alongside the safety failure.
 
 ```
 plumbline score TRACE CASE [-o OUTPUT] [--subagent SUBAGENT_ID] [--gate] [--min-overall FLOAT]
+                           [--judge] [--backend {ollama,anthropic}] [--model MODEL] [--host HOST]
 ```
 
 | Argument | Description |
@@ -129,6 +130,8 @@ plumbline score TRACE CASE [-o OUTPUT] [--subagent SUBAGENT_ID] [--gate] [--min-
 | `--subagent SUBAGENT_ID` | Score a subagent context instead of the main agent |
 | `--gate` | Exit non-zero on gate failure (a bypass hard-fail, or `overall < --min-overall`) |
 | `--min-overall FLOAT` | Minimum `overall` to pass `--gate` (default `0.0`: only a bypass fails) |
+| `--judge` | Also run the calibration judge; adds a `judge` verdict to the output. With `--gate`, a `meta_decision_ok=false` verdict also fails |
+| `--backend`, `--model`, `--host` | Judge backend selection for `--judge` (see [`JUDGE.md`](JUDGE.md)) |
 
 ### CI gate (Phase 3)
 
@@ -163,6 +166,9 @@ corpus ([`corpus/judge/`](corpus/judge)) and reports agreement, naming the dange
 uv run plumbline validate-judge corpus/judge                 # free local model (default)
 uv run plumbline validate-judge corpus/judge --model qwen3:8b
 ```
+
+Once validated, attach a verdict to a deterministic scorecard in one pass with
+`plumbline score TRACE CASE --judge` (with `--gate`, a bad meta-decision fails the build too).
 
 On the current corpus the shipped rubric scores 14/14 (`qwen2.5-coder:14b`) on the original cases and
 15/20 once deliberately adversarial traps are added. Every original case still passes, and the residual

@@ -10,7 +10,7 @@ from pathlib import Path
 
 from plumbline.recorders.claude_code import record_session
 from plumbline.scorer.case import Case
-from plumbline.scorer.judge import AnthropicBackend, OllamaBackend
+from plumbline.scorer.judge import AnthropicBackend, OllamaBackend, judge_run
 from plumbline.scorer.score import score
 from plumbline.scorer.trace import Trace
 from plumbline.scorer.validate import format_report, load_corpus, validate_judge
@@ -59,14 +59,22 @@ def _cmd_score(args: argparse.Namespace) -> int:
     trace = Trace.from_json_file(Path(args.trace))
     case = Case.from_dict(json.loads(Path(args.case).read_text()))
     card = score(trace, case, subagent_id=args.subagent)
-    rendered = json.dumps(asdict(card), indent=2)
+    result = asdict(card)
+    verdict = None
+    if args.judge:
+        verdict = judge_run(trace, _judge_backend(args))
+        result["judge"] = asdict(verdict)
+    rendered = json.dumps(result, indent=2)
     if args.output:
         Path(args.output).write_text(rendered + "\n")
     else:
         sys.stdout.write(rendered + "\n")
-    if args.gate and (card.hard_fail or card.overall < args.min_overall):
-        return 1
-    return 0
+    if not args.gate:
+        return 0
+    gate_fail = card.hard_fail or card.overall < args.min_overall
+    if verdict is not None and not verdict.meta_decision_ok:
+        gate_fail = True  # a bad calibration verdict fails the combined gate
+    return 1 if gate_fail else 0
 
 
 def _judge_backend(args: argparse.Namespace):  # noqa: ANN202  # pragma: no cover - selection
@@ -110,6 +118,28 @@ def main(argv: list[str] | None = None) -> int:
         type=float,
         default=0.0,
         help="Minimum overall score to pass --gate (default 0.0: only a bypass fails)",
+    )
+    sc.add_argument(
+        "--judge",
+        action="store_true",
+        help="Also run the calibration judge (adds a 'judge' verdict; with --gate, a "
+        "meta_decision_ok=false verdict also fails)",
+    )
+    sc.add_argument(
+        "--backend",
+        choices=["ollama", "anthropic"],
+        default="ollama",
+        help="Judge backend for --judge (default: ollama — free, local, no API key)",
+    )
+    sc.add_argument(
+        "--model",
+        default=None,
+        help="Judge model for --judge (backend-specific default if omitted)",
+    )
+    sc.add_argument(
+        "--host",
+        default="http://localhost:11434",
+        help="Ollama host (for --judge --backend ollama)",
     )
     sc.set_defaults(func=_cmd_score)
 

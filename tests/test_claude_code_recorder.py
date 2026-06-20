@@ -90,9 +90,15 @@ def test_mode_change(trace: dict) -> None:
 
 
 def test_compaction(trace: dict) -> None:
+    # Shape verified against real Claude Code transcripts: compaction is a
+    # `type:system, subtype:compact_boundary` event whose compactMetadata carries
+    # trigger (auto|manual|refusal) + preTokens + postTokens.
     comp = steps_of_kind(trace, "compaction")
     assert len(comp) == 1
-    assert comp[0]["attributes"]["harness.compaction.reason"] == "auto"
+    attrs = comp[0]["attributes"]
+    assert attrs["harness.compaction.reason"] == "auto"
+    assert attrs["harness.compaction.tokens_before"] == 140000
+    assert attrs["harness.compaction.tokens_after"] == 38000
 
 
 def test_no_pii_anywhere(trace: dict) -> None:

@@ -52,6 +52,7 @@ class Run:
     model: str | None = None
     plan: Plan | None = None
     outcome_status: str | None = None
+    outcome_summary: str | None = None
 
 
 @dataclass(frozen=True)
@@ -103,6 +104,7 @@ def _run(raw: Mapping[str, Any]) -> Run:
         model=raw.get("model"),
         plan=_plan(raw.get("plan")),
         outcome_status=outcome.get("status"),
+        outcome_summary=outcome.get("summary"),
     )
 
 

@@ -84,6 +84,47 @@ def test_build_prompt_surfaces_deterministic_bypass() -> None:
     assert "guard-denied" in prompt
 
 
+def _decision_trace() -> Trace:
+    return Trace.from_dict(
+        {
+            "plumbline_version": "0.1.0",
+            "run": {
+                "run_id": "r",
+                "harness": {"name": "x"},
+                "started_at": "2026-01-01T00:00:00Z",
+                "plan": {"source": "user_prompt", "statement": "Make the limit configurable."},
+                "outcome": {"status": "aborted", "summary": "Asked operator: per-user or global?"},
+            },
+            "steps": [
+                {
+                    "step_id": "d1",
+                    "kind": "decision",
+                    "started_at": "2026-01-01T00:00:01Z",
+                    "attributes": {
+                        "agent.decision.kind": "escalate",
+                        "agent.decision.rationale": "Ambiguous; ask before guessing.",
+                    },
+                },
+            ],
+        }
+    )
+
+
+def test_build_prompt_surfaces_agent_decisions() -> None:
+    # The escalate/refuse/reroute decision is the core calibration signal; the
+    # judge cannot credit an escalation it cannot see.
+    prompt = build_prompt(_decision_trace())
+    assert "escalate" in prompt
+    assert "ask before guessing" in prompt
+
+
+def test_build_prompt_includes_outcome_summary() -> None:
+    # The outcome summary is the agent's self-reported CLAIM; rules 3-4 check it
+    # against the realized path, so it must reach the judge.
+    prompt = build_prompt(_decision_trace())
+    assert "Asked operator: per-user or global?" in prompt
+
+
 def test_parse_verdict_clean_json() -> None:
     v = parse_verdict(_GOOD)
     assert v.meta_decision_ok is True

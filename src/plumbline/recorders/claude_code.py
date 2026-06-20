@@ -24,6 +24,10 @@ from plumbline.scrub import scrub_obj
 PLUMBLINE_VERSION = "0.1.0"
 HARNESS_NAME = "claude-code"
 _EPOCH = "1970-01-01T00:00:00Z"
+_SUMMARY_MAX = 600  # cap the observed outcome summary so a trace stays bounded
+# Final-turn stop_reason -> outcome status. Only an explicit end_turn is a claimed
+# completion; everything else stays conservative ("unknown") rather than guessing.
+_STOP_REASON_STATUS = {"end_turn": "completed"}
 
 # Tool name -> a coarse tool.result.kind tag (typed-result detail lives in args).
 _RESULT_KIND = {
@@ -267,16 +271,26 @@ def _mode_step(
     return step, to
 
 
-def _first_user_text(ev: JsonObj) -> str | None:
-    for block in _content(ev):
-        if block.get("type") == "text" and block.get("text"):
-            return block["text"]
-    return None
+def _content_text(ev: JsonObj) -> str | None:
+    """The text of a turn, whether ``message.content`` is a plain string (common for
+    the first user prompt) or a list of blocks. Joins all text blocks; ``None`` if
+    there is no text.
+    """
+    content = _as_dict(ev.get("message")).get("content")
+    if isinstance(content, str):
+        return content or None
+    parts = [
+        block["text"]
+        for block in (content if isinstance(content, list) else [])
+        if isinstance(block, dict) and block.get("type") == "text" and block.get("text")
+    ]
+    return "\n".join(parts) or None
 
 
 def _build_run(events: list[JsonObj]) -> JsonObj:
     run_id = "unknown"
     version = entrypoint = cwd = git_branch = model = plan_text = None
+    out_summary = out_stop = None
     started = ended = None
     for ev in events:
         if run_id == "unknown" and ev.get("sessionId"):
@@ -288,10 +302,13 @@ def _build_run(events: list[JsonObj]) -> JsonObj:
         if ts := ev.get("timestamp"):
             started = started or ts
             ended = ts
-        if model is None and ev.get("type") == "assistant" and not ev.get("isSidechain"):
-            model = _as_dict(ev.get("message")).get("model")
+        if ev.get("type") == "assistant" and not ev.get("isSidechain"):
+            msg = _as_dict(ev.get("message"))
+            model = model or msg.get("model")
+            out_summary = _content_text(ev) or out_summary  # keep the last turn's text
+            out_stop = msg.get("stop_reason") or out_stop
         if plan_text is None and ev.get("type") == "user" and not ev.get("isSidechain"):
-            plan_text = _first_user_text(ev)
+            plan_text = _content_text(ev)
 
     run: JsonObj = {
         "run_id": run_id,
@@ -304,4 +321,9 @@ def _build_run(events: list[JsonObj]) -> JsonObj:
         run["workspace"] = {"cwd": cwd, "git_branch": git_branch}
     if plan_text:
         run["plan"] = {"source": "user_prompt", "statement": plan_text}
+    if out_stop is not None or out_summary is not None:
+        run["outcome"] = {
+            "status": _STOP_REASON_STATUS.get(out_stop or "", "unknown"),
+            "summary": out_summary[:_SUMMARY_MAX] if out_summary else None,
+        }
     return run

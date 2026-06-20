@@ -32,6 +32,79 @@ def test_run_metadata(trace: dict) -> None:
     assert "rate-limit guard" in run["plan"]["statement"]
 
 
+def test_outcome_captured_from_final_assistant_turn(trace: dict) -> None:
+    # The recorder captures run.outcome from the last main-agent assistant turn:
+    # an end_turn stop maps to "completed", and its text is the agent's claim.
+    outcome = trace["run"]["outcome"]
+    assert outcome["status"] == "completed"
+    assert "tests pass" in outcome["summary"]
+
+
+def test_plan_captured_from_string_content(tmp_path: Path) -> None:
+    # Real CC often sends the first user prompt as a plain string, not a block list;
+    # the recorder must still capture it as the plan (regression: it was dropped).
+    sess = tmp_path / "s.jsonl"
+    lines = [
+        {
+            "type": "user",
+            "uuid": "u1",
+            "parentUuid": None,
+            "sessionId": "x",
+            "timestamp": "2026-06-19T00:00:00Z",
+            "message": {"content": "Add a decline-path eval test without a live model."},
+        },
+        {
+            "type": "assistant",
+            "uuid": "a1",
+            "parentUuid": "u1",
+            "sessionId": "x",
+            "timestamp": "2026-06-19T00:00:01Z",
+            "message": {
+                "model": "m",
+                "stop_reason": "end_turn",
+                "content": [{"type": "text", "text": "Done."}],
+            },
+        },
+    ]
+    sess.write_text("\n".join(json.dumps(line) for line in lines) + "\n")
+    trace = record_session(sess)
+    assert trace["run"]["plan"]["statement"] == "Add a decline-path eval test without a live model."
+    assert trace["run"]["plan"]["source"] == "user_prompt"
+    assert trace["run"]["outcome"] == {"status": "completed", "summary": "Done."}
+
+
+def test_outcome_unknown_when_session_ends_mid_tool(tmp_path: Path) -> None:
+    # A session whose final assistant turn stops on tool_use (no end_turn) is not a
+    # claimed completion; status stays conservative and the summary is absent.
+    sess = tmp_path / "s.jsonl"
+    lines = [
+        {
+            "type": "user",
+            "uuid": "u1",
+            "parentUuid": None,
+            "sessionId": "x",
+            "timestamp": "2026-06-19T00:00:00Z",
+            "message": {"content": "do a thing"},
+        },
+        {
+            "type": "assistant",
+            "uuid": "a1",
+            "parentUuid": "u1",
+            "sessionId": "x",
+            "timestamp": "2026-06-19T00:00:01Z",
+            "message": {
+                "model": "m",
+                "stop_reason": "tool_use",
+                "content": [{"type": "tool_use", "id": "t1", "name": "Read", "input": {}}],
+            },
+        },
+    ]
+    sess.write_text("\n".join(json.dumps(line) for line in lines) + "\n")
+    trace = record_session(sess)
+    assert trace["run"]["outcome"]["status"] == "unknown"
+    assert trace["run"]["outcome"]["summary"] is None
+
+
 def test_llm_steps_have_model_and_usage(trace: dict) -> None:
     llm = steps_of_kind(trace, "llm")
     assert len(llm) >= 5

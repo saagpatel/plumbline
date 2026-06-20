@@ -80,13 +80,26 @@ lets the judge (and a human) weight it accordingly.
 
 ## Inference rules
 
-### Outcome (Phase 4a)
+### Outcome (Phase 4a, shipped)
 
-- **status**: from the final non-sidechain assistant turn. `stop_reason == "end_turn"`
-  after tool work maps to `completed`; a refusal stop maps to `refused`; a truncated or
-  interrupted tail maps to `aborted`; otherwise `unknown` (conservative default).
-- **summary**: the last assistant text block (scrubbed, truncated). This is the agent's
-  self-reported CLAIM, which judge rule 4 checks against the realized path.
+Refinement found while building: the outcome **summary** is the final assistant turn,
+which is *observable*, exactly like the plan is the first user turn. So outcome is
+**captured by the recorder** (symmetric with plan), not inferred by the scorer. The
+schema's `outcome` allows only `status` + `summary` (`additionalProperties: false`),
+which also rules out an inferred-provenance tag here. Only `decision` steps remain
+genuine scorer-side inference (Phase 4b).
+
+As shipped in the recorder's `_build_run`:
+
+- **status**: from the final non-sidechain assistant turn's `stop_reason`. Only an
+  explicit `end_turn` maps to `completed`; everything else stays `unknown`
+  (conservative; no guessing). Enum-constrained to {completed, failed, aborted,
+  unknown}.
+- **summary**: the last assistant turn's joined text blocks, scrubbed and truncated to
+  600 chars. This is the agent's self-reported CLAIM, which judge rule 4 checks against
+  the realized path.
+- **plan fix**: `_content_text` now reads a plain-string `message.content`, recovering
+  the first-user-prompt plan that real sessions carry as a string.
 
 ### Decisions, structural tier (Phase 4b, deterministic)
 
@@ -157,8 +170,10 @@ An inference layer is only trustworthy if validated, same lesson as the judge.
 
 ## Phased delivery
 
-- **4a**: plan-capture string fix + outcome inference (status + summary) + tests. The
-  smallest slice that gives the judge a real plan and a real claim to check.
+- **4a** (shipped): plan-capture string fix + outcome capture (status + summary) in the
+  recorder + tests. Re-dogfooded: the judge now reasons over the real plan and claim
+  instead of returning a vacuous "approve". (Outcome turned out to be observable
+  recorder capture, not scorer inference; see the Outcome section.)
 - **4b**: structural decision inference (denial- and failure-anchored) + provenance
   tags + `enrich` wiring + tests.
 - **4c**: real-session validation corpus; measure inference precision and judge-on-real;

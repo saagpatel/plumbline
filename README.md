@@ -154,14 +154,25 @@ lives behind the `judge` extra:
 uv pip install -e ".[judge]"
 ```
 
-**Validate the judge before trusting it.** An unvalidated judge is decoration — on hard cases it can
+**Validate the judge before trusting it.** An unvalidated judge is decoration; on hard cases it can
 disagree with humans on a majority of runs. `plumbline.scorer.validate` runs the judge over a labeled
 corpus ([`corpus/judge/`](corpus/judge)) and reports agreement, naming the dangerous error explicitly
-(`missed_bad`: the judge blessed a run a human judged bad). Grow the corpus with subtle cases the
-deterministic gate can't catch, then measure.
+(`missed_bad`: the judge blessed a run a human judged bad).
+
+```sh
+uv run plumbline validate-judge corpus/judge                 # free local model (default)
+uv run plumbline validate-judge corpus/judge --model qwen3:8b
+```
+
+On the current corpus the shipped rubric scores 14/14 (`qwen2.5-coder:14b`) on the original cases and
+15/20 once deliberately adversarial traps are added. Every original case still passes, and the residual
+gaps are a documented small-local-model ceiling. Full architecture, the rubric, the validation tables,
+and the ceiling analysis live in [`JUDGE.md`](JUDGE.md).
 
 ### Further reading
 
+- [`JUDGE.md`](JUDGE.md) — calibration judge: architecture, the rubric, validation results across models,
+  and the measured adversarial ceiling.
 - [`SCORING.md`](SCORING.md) — full model: every axis, the composite formula, bypass detection in depth,
   and design rationale.
 - [`CASES.md`](CASES.md) — reference-case format spec, tool naming conventions, and worked examples.

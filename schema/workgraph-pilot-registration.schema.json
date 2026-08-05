@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://plumbline.dev/schema/0.3.0/workgraph-pilot-registration.schema.json",
+  "title": "WorkGraphShadowPilotRegistrationV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "registered_at",
+    "graph_id",
+    "source_graph_digest",
+    "compiled_plan_digest",
+    "compiler_version",
+    "lane_bindings",
+    "metric_contract",
+    "admission",
+    "claim_ceiling"
+  ],
+  "properties": {
+    "schema_version": {"const": "WorkGraphShadowPilotRegistrationV1"},
+    "registered_at": {"type": "string", "format": "date-time"},
+    "graph_id": {"$ref": "#/$defs/metadataId"},
+    "source_graph_digest": {"$ref": "#/$defs/digest"},
+    "compiled_plan_digest": {"$ref": "#/$defs/digest"},
+    "compiler_version": {"$ref": "#/$defs/metadataId"},
+    "lane_bindings": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/laneBinding"}
+    },
+    "metric_contract": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {"$ref": "#/$defs/boundedText"}
+    },
+    "admission": {"const": "compiled_and_digest_bound_before_dispatch"},
+    "claim_ceiling": {"$ref": "#/$defs/boundedText"}
+  },
+  "$defs": {
+    "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "metadataIds": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"$ref": "#/$defs/metadataId"}
+    },
+    "boundedText": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "pattern": "^[^\u0000-\u001F]+$"
+    },
+    "metadataId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,127}$"
+    },
+    "metadataRef": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9/][A-Za-z0-9._:/#@+-]{0,255}$"
+    },
+    "laneBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["lane_id", "wave", "agent_path", "depends_on", "mutation_mode"],
+      "properties": {
+        "lane_id": {"$ref": "#/$defs/metadataId"},
+        "wave": {"type": "integer", "minimum": 1},
+        "agent_path": {"$ref": "#/$defs/metadataRef"},
+        "depends_on": {"$ref": "#/$defs/metadataIds"},
+        "mutation_mode": {
+          "enum": ["strict-read-only", "report-only", "repair-approved"]
+        }
+      }
+    }
+  }
+}

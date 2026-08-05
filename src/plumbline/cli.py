@@ -14,6 +14,13 @@ from plumbline.scorer.judge import AnthropicBackend, OllamaBackend, judge_run
 from plumbline.scorer.score import score
 from plumbline.scorer.trace import Trace
 from plumbline.scorer.validate import format_report, load_corpus, validate_judge
+from plumbline.trajectory import (
+    TrajectoryContractError,
+    aggregate_outcome_bound_trajectories,
+    load_outcome_bound_trajectory,
+    query_capability_decision,
+)
+from plumbline.workgraph import WorkGraphContractError, evaluate_workgraph_shadow_files
 
 
 def _find_schema() -> Path | None:
@@ -96,7 +103,76 @@ def _cmd_validate_judge(
     return 1 if report.missed_bad else 0
 
 
-def main(argv: list[str] | None = None) -> int:
+def _render_json(value: object, output: str | None) -> None:
+    rendered = json.dumps(value, indent=2, sort_keys=True) + "\n"
+    if output:
+        Path(output).write_text(rendered, encoding="utf-8")
+    else:
+        sys.stdout.write(rendered)
+
+
+def _cmd_validate_outcome(args: argparse.Namespace) -> int:
+    try:
+        document = load_outcome_bound_trajectory(Path(args.trajectory))
+    except TrajectoryContractError as exc:
+        sys.stderr.write(f"INVALID {exc}\n")
+        return 2
+    _render_json(
+        {
+            "status": "valid",
+            "schema_version": document["schema_version"],
+            "trajectory_id": document["trajectory_id"],
+            "capability_count": len(document["capabilities"]),
+            "outcome_count": len(document["outcomes"]),
+        },
+        args.output,
+    )
+    return 0
+
+
+def _cmd_aggregate_outcomes(args: argparse.Namespace) -> int:
+    try:
+        documents = [load_outcome_bound_trajectory(Path(path)) for path in args.trajectories]
+        aggregate = aggregate_outcome_bound_trajectories(documents)
+    except TrajectoryContractError as exc:
+        sys.stderr.write(f"INVALID {exc}\n")
+        return 2
+    _render_json(aggregate, args.output)
+    return 0
+
+
+def _cmd_query_outcomes(args: argparse.Namespace) -> int:
+    try:
+        aggregate = json.loads(Path(args.aggregate).read_text(encoding="utf-8"))
+        result = query_capability_decision(
+            aggregate,
+            args.capability,
+            minimum_labeled_per_cohort=args.minimum_labeled_per_cohort,
+            minimum_label_coverage=args.minimum_label_coverage,
+            material_rate_delta=args.material_rate_delta,
+        )
+    except (OSError, json.JSONDecodeError, TrajectoryContractError) as exc:
+        sys.stderr.write(f"INVALID {exc}\n")
+        return 2
+    _render_json(result, args.output)
+    return 0
+
+
+def _cmd_workgraph_shadow(args: argparse.Namespace) -> int:
+    try:
+        report = evaluate_workgraph_shadow_files(
+            Path(args.compiled_plan), Path(args.registration), Path(args.events)
+        )
+    except WorkGraphContractError as exc:
+        sys.stderr.write(f"INVALID {exc}\n")
+        return 2
+    _render_json(report, args.output)
+    if args.gate and report["disposition"] != "GO":
+        return 1
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:  # noqa: PLR0915
     parser = argparse.ArgumentParser(prog="plumbline", description="Plumbline trace tooling")
     sub = parser.add_subparsers(dest="command", required=True)
     rec = sub.add_parser("record", help="Record a Claude Code transcript into a Plumbline trace")
@@ -176,6 +252,45 @@ def main(argv: list[str] | None = None) -> int:
         help="Judge raw traces without inferred decisions (to measure the inference layer)",
     )
     vj.set_defaults(func=_cmd_validate_judge)
+
+    vo = sub.add_parser(
+        "validate-outcome",
+        help="Validate a metadata-only OutcomeBoundTrajectoryV1 envelope",
+    )
+    vo.add_argument("trajectory", help="Path to an OutcomeBoundTrajectoryV1 JSON document")
+    vo.add_argument("-o", "--output", help="Output path (default: stdout)")
+    vo.set_defaults(func=_cmd_validate_outcome)
+
+    ao = sub.add_parser(
+        "aggregate-outcomes",
+        help="Aggregate validated outcome-bound trajectory envelopes",
+    )
+    ao.add_argument("trajectories", nargs="+", help="Trajectory JSON documents")
+    ao.add_argument("-o", "--output", help="Output path (default: stdout)")
+    ao.set_defaults(func=_cmd_aggregate_outcomes)
+
+    qo = sub.add_parser(
+        "query-outcomes",
+        help="Evaluate the evidence kill/hold/review decision for one capability",
+    )
+    qo.add_argument("aggregate", help="OutcomeBoundTrajectoryAggregateV1 JSON document")
+    qo.add_argument("capability", help="Exact capability id")
+    qo.add_argument("--minimum-labeled-per-cohort", type=int, default=3)
+    qo.add_argument("--minimum-label-coverage", type=float, default=0.8)
+    qo.add_argument("--material-rate-delta", type=float, default=0.1)
+    qo.add_argument("-o", "--output", help="Output path (default: stdout)")
+    qo.set_defaults(func=_cmd_query_outcomes)
+
+    wg = sub.add_parser(
+        "workgraph-shadow",
+        help="Passively reconcile observed lane events with a frozen WorkGraphV1 plan",
+    )
+    wg.add_argument("compiled_plan", help="Exact compiled WorkGraphV1 plan JSON")
+    wg.add_argument("registration", help="Exact prospective WorkGraph pilot registration JSON")
+    wg.add_argument("events", help="WorkGraphObservedEventsV1 JSON")
+    wg.add_argument("-o", "--output", help="Output path (default: stdout)")
+    wg.add_argument("--gate", action="store_true", help="Exit non-zero unless disposition is GO")
+    wg.set_defaults(func=_cmd_workgraph_shadow)
 
     args = parser.parse_args(argv)
     return int(args.func(args))

@@ -1,0 +1,88 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://plumbline.dev/schema/0.3.0/workgraph-observed-events.schema.json",
+  "title": "WorkGraphObservedEventsV1",
+  "description": "Metadata-only observed events for a prospective, digest-bound WorkGraphV1 shadow pilot.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "graph_id",
+    "compiled_plan_digest",
+    "registration_digest",
+    "events"
+  ],
+  "properties": {
+    "schema_version": {"const": "WorkGraphObservedEventsV1"},
+    "graph_id": {"$ref": "#/$defs/metadataId"},
+    "compiled_plan_digest": {"$ref": "#/$defs/digest"},
+    "registration_digest": {"$ref": "#/$defs/digest"},
+    "events": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/event"}
+    }
+  },
+  "$defs": {
+    "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "event": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "event_id",
+        "lane_id",
+        "agent_path",
+        "event_type",
+        "observed_at",
+        "evidence_refs",
+        "mutation_observed",
+        "duplicate_signature",
+        "tokens",
+        "cost_usd",
+        "retry_count",
+        "unknown_reason"
+      ],
+      "properties": {
+        "event_id": {"$ref": "#/$defs/metadataId"},
+        "lane_id": {"$ref": "#/$defs/metadataId"},
+        "agent_path": {"$ref": "#/$defs/metadataRef"},
+        "event_type": {"enum": ["started", "blocked", "completed", "failed"]},
+        "observed_at": {"type": "string", "format": "date-time"},
+        "evidence_refs": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/metadataRef"}
+        },
+        "mutation_observed": {"type": "boolean"},
+        "duplicate_signature": {
+          "anyOf": [
+            {"$ref": "#/$defs/metadataRef"},
+            {"type": "null"}
+          ]
+        },
+        "tokens": {"type": ["integer", "null"], "minimum": 0},
+        "cost_usd": {"type": ["number", "null"], "minimum": 0},
+        "retry_count": {"type": "integer", "minimum": 0},
+        "unknown_reason": {
+          "anyOf": [
+            {"$ref": "#/$defs/boundedText"},
+            {"type": "null"}
+          ]
+        }
+      }
+    },
+    "boundedText": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "pattern": "^[^\u0000-\u001F]+$"
+    },
+    "metadataId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,127}$"
+    },
+    "metadataRef": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9/][A-Za-z0-9._:/#@+-]{0,255}$"
+    }
+  }
+}

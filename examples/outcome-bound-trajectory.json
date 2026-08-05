@@ -1,0 +1,110 @@
+{
+  "schema_version": "OutcomeBoundTrajectoryV1",
+  "trajectory_id": "obt-synthetic-001",
+  "created_at": "2026-08-05T05:00:00Z",
+  "task": {
+    "task_id": "task-pseudonym-7af3",
+    "identity_kind": "pseudonymous",
+    "execution_id": "controlled-workflow-001"
+  },
+  "trace": {
+    "run_id": "synthetic-run-001",
+    "digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+    "schema_version": "0.1.0"
+  },
+  "capability_usage_snapshot": {
+    "schema": "CodexCapabilityUsageSnapshotV1",
+    "digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+    "generated_at": "2026-08-05T04:00:00Z",
+    "as_of": "2026-08-05T03:59:00Z",
+    "claim_ceiling": "Observed skill reads and attributable tool calls; availability is not adoption."
+  },
+  "capabilities": [
+    {
+      "capability_id": "quality-gatekeeper",
+      "kind": "skill",
+      "state": "available",
+      "observed_at": "2026-08-05T05:00:01Z",
+      "evidence_refs": ["usage-snapshot#skills/quality-gatekeeper"],
+      "span_refs": [],
+      "outcome_refs": [],
+      "provenance": "capability-snapshot-digest",
+      "confidence": 1.0
+    },
+    {
+      "capability_id": "quality-gatekeeper",
+      "kind": "skill",
+      "state": "exposed",
+      "observed_at": "2026-08-05T05:00:02Z",
+      "evidence_refs": ["trace#step/tool-read"],
+      "span_refs": ["step-003"],
+      "outcome_refs": [],
+      "provenance": "plumbline-span-reference",
+      "confidence": 1.0
+    },
+    {
+      "capability_id": "quality-gatekeeper",
+      "kind": "skill",
+      "state": "adopted",
+      "observed_at": "2026-08-05T05:00:03Z",
+      "evidence_refs": ["trace#step/gate-evaluation"],
+      "span_refs": ["step-004"],
+      "outcome_refs": ["outcome-focused-tests"],
+      "provenance": "independent-verifier-receipt",
+      "confidence": 0.99
+    }
+  ],
+  "outcomes": [
+    {
+      "outcome_id": "outcome-focused-tests",
+      "label": "focused-regression-suite",
+      "status": "passed",
+      "source_type": "deterministic-test-receipt",
+      "source_digest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+      "source_ref": "receipt#focused-regression-suite",
+      "authority": "local-deterministic-verifier",
+      "observed_at": "2026-08-05T05:10:00Z",
+      "confidence": 1.0,
+      "independent": true
+    }
+  ],
+  "indicators": {
+    "duration_ms": 600000,
+    "rework_count": 1,
+    "error_count": 0,
+    "input_tokens": 1200,
+    "output_tokens": 800,
+    "total_tokens": 2000,
+    "cost_usd": null
+  },
+  "privacy": {
+    "profile": "metadata-only-v1",
+    "raw_prompts_included": false,
+    "full_tool_payloads_included": false,
+    "secret_material_included": false,
+    "redaction_state": "verified-synthetic",
+    "authorization_audience": ["local-operator"],
+    "verification": {
+      "verifier": "synthetic-fixture-reviewer",
+      "ruleset": "metadata-only-v1",
+      "receipt_ref": "outcome-privacy-review-receipt.json",
+      "receipt_digest": "sha256:b59d8e92d307d0bfaf3184c45d64cf0149df795ae1d5416eb481ee4433a1bb47",
+      "verified_at": "2026-08-05T05:00:00Z"
+    }
+  },
+  "lifecycle": {
+    "retention_days": 30,
+    "expires_at": "2026-09-04T05:00:00Z",
+    "deletion_mode": "delete-envelope"
+  },
+  "schema_evolution": {
+    "producer": "plumbline",
+    "producer_version": "0.3.0",
+    "compatible_with": ["PlumblineTrace-0.1.x"]
+  },
+  "claim": {
+    "state": "observation",
+    "ceiling": "One synthetic, independently verified workflow observation; no correlation or causality.",
+    "basis_refs": ["trace#sha256", "receipt#focused-regression-suite"]
+  }
+}

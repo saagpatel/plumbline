@@ -4,6 +4,31 @@ All notable changes to Plumbline are recorded here. The trace **schema** version
 (`plumbline_version`, currently `0.1.0`) is independent of this package version; Phase 4
 populates existing schema fields and did not change the schema.
 
+## 0.3.0
+
+### Added
+
+- `OutcomeBoundTrajectoryV1`, a metadata-only companion envelope that digest-binds existing traces to
+  capability availability/exposure/adoption observations, independently attributable outcomes,
+  bounded cost/rework indicators, lifecycle controls, and explicit claim ceilings.
+- Deterministic validation, descriptive aggregation, and a fail-closed capability decision query with
+  capability-bound labels, conflict rejection, label-coverage, cohort-size, and no-decision-change
+  kill criteria. Outcome labels are state-scoped, and ambiguous available-versus-exposed bindings are
+  rejected. File-backed validation resolves a contained privacy-review receipt digest.
+- `WorkGraphShadowTraceV1` and a passive WorkGraphV1 adapter that reconciles prospective observed lane
+  transitions against an exact frozen registration, including agent assignments, dependencies,
+  mutations, duplicates, coverage, wall time, retries, and available token/cost indicators without
+  dispatch or control-plane mutation. Event identifiers, references, and prose metadata are bounded
+  and single-line in both runtime validation and JSON schemas.
+- CLI commands: `validate-outcome`, `aggregate-outcomes`, `query-outcomes`, and `workgraph-shadow`.
+
+### Boundaries
+
+- `PlumblineTrace` remains backward compatible and unchanged.
+- Outcome aggregation is descriptive; it never converts correlation into a causal scale decision.
+- The WorkGraph adapter is passive and one pilot cannot prove optimal scheduling, causal improvement,
+  automatic-dispatch safety, or production readiness.
+
 ## 0.2.0
 
 The inference layer: make the calibration judge work on real recorded traces, not just

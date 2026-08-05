@@ -32,6 +32,7 @@ Google ADK). The gap is the **intersection** none of them fills:
 | **2** | Offline deterministic scorer (selection / ordering / edit-similarity / param-name + bypass gate) + opt-in calibration judge | shipped |
 | **3** | CI gate (`score --gate`, bare exit code) + an OTel `semantic-conventions-genai` extension proposal ([`OTEL-PROPOSAL.md`](OTEL-PROPOSAL.md)) | shipped |
 | **4** | **Inference layer: outcome/plan capture + structural & text-signal decision inference, so the judge works on real recorded traces ([`PHASE4.md`](PHASE4.md))** | **shipped (v0.2)** |
+| **5** | **Metadata-only outcome binding + passive WorkGraphV1 shadow reconciliation ([`OUTCOME-BOUND-TRAJECTORY.md`](OUTCOME-BOUND-TRAJECTORY.md), [`WORKGRAPH-SHADOW.md`](WORKGRAPH-SHADOW.md))** | **shipped (v0.3)** |
 
 ## Scoring (Phase 2)
 
@@ -212,12 +213,42 @@ Design, inference rules, the privacy decision, and the honest coverage/precision
 - Human spec: [`SCHEMA.md`](SCHEMA.md)
 - Machine schema (JSON Schema 2020-12): [`schema/plumbline-trace.schema.json`](schema/plumbline-trace.schema.json)
 - Worked, synthetic, PII-free example: [`examples/example-run.plumbline.json`](examples/example-run.plumbline.json)
+- Outcome companion contract: [`schema/outcome-bound-trajectory.schema.json`](schema/outcome-bound-trajectory.schema.json)
+- WorkGraph prospective registration contract: [`schema/workgraph-pilot-registration.schema.json`](schema/workgraph-pilot-registration.schema.json)
+- WorkGraph observed-event contract: [`schema/workgraph-observed-events.schema.json`](schema/workgraph-observed-events.schema.json)
+- Passive WorkGraph report contract: [`schema/workgraph-shadow-trace.schema.json`](schema/workgraph-shadow-trace.schema.json)
 
 Validate the example against the schema:
 
 ```sh
 uvx check-jsonschema --schemafile schema/plumbline-trace.schema.json examples/example-run.plumbline.json
 ```
+
+## Outcome-bound telemetry and WorkGraph shadowing (Phase 5)
+
+Plumbline now keeps an agent's claimed trace outcome separate from independently attributable outcome
+evidence. `OutcomeBoundTrajectoryV1` binds a trace digest, pseudonymous task identity, capability
+availability/exposure/adoption states, bounded indicators, lifecycle rules, and an explicit claim
+ceiling. Raw prompts, full tool payloads, and secret material are structurally excluded;
+file-backed validation resolves the exact contained privacy-review receipt digest.
+
+```sh
+plumbline validate-outcome examples/outcome-bound-trajectory.json
+plumbline aggregate-outcomes run-a.outcome.json run-b.outcome.json -o aggregate.json
+plumbline query-outcomes aggregate.json quality-gatekeeper
+```
+
+The passive WorkGraph adapter compares a compiled plan with prospective metadata-only lane events. It
+fails closed on missing terminal evidence, constrains all event identifiers and references to bounded
+single-line metadata, and never dispatches, leases, retries, or rewrites work:
+
+```sh
+plumbline workgraph-shadow compiled-plan.json registration.json observed-events.json --gate
+```
+
+See [`OUTCOME-BOUND-TRAJECTORY.md`](OUTCOME-BOUND-TRAJECTORY.md) and
+[`WORKGRAPH-SHADOW.md`](WORKGRAPH-SHADOW.md) for contracts, kill criteria, privacy/lifecycle policy,
+compatibility, and claim ceilings.
 
 ## Recording a Claude Code session (Phase 1)
 

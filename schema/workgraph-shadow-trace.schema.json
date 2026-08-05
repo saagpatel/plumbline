@@ -1,0 +1,125 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://plumbline.dev/schema/0.3.0/workgraph-shadow-trace.schema.json",
+  "title": "WorkGraphShadowTraceV1",
+  "description": "A passive, metadata-only reconciliation of observed lane transitions against one digest-bound compiled WorkGraphV1 plan.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "graph_id",
+    "compiled_plan_digest",
+    "registration_digest",
+    "disposition",
+    "coverage",
+    "evidence_completeness",
+    "metrics",
+    "lane_agent_mapping",
+    "prospectivity",
+    "violations",
+    "observed_events_digest",
+    "claim_ceiling"
+  ],
+  "properties": {
+    "schema_version": {"const": "WorkGraphShadowTraceV1"},
+    "graph_id": {"$ref": "#/$defs/metadataId"},
+    "compiled_plan_digest": {"$ref": "#/$defs/digest"},
+    "registration_digest": {"$ref": "#/$defs/digest"},
+    "disposition": {"enum": ["GO", "NO_GO", "UNKNOWN"]},
+    "coverage": {"type": "number", "minimum": 0, "maximum": 1},
+    "evidence_completeness": {"type": "number", "minimum": 0, "maximum": 1},
+    "metrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "declared_lanes",
+        "terminal_lanes",
+        "failed_lanes",
+        "blocked_lanes",
+        "incomplete_lanes",
+        "wall_time_ms",
+        "observed_serialized_pairs",
+        "duplicate_groups",
+        "retry_count",
+        "tokens",
+        "cost_usd"
+      ],
+      "properties": {
+        "declared_lanes": {"type": "integer", "minimum": 0},
+        "terminal_lanes": {"type": "integer", "minimum": 0},
+        "failed_lanes": {"$ref": "#/$defs/refs"},
+        "blocked_lanes": {"$ref": "#/$defs/refs"},
+        "incomplete_lanes": {"$ref": "#/$defs/refs"},
+        "wall_time_ms": {"type": ["integer", "null"], "minimum": 0},
+        "observed_serialized_pairs": {"type": "integer", "minimum": 0},
+        "duplicate_groups": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/refs"}
+        },
+        "retry_count": {"type": "integer", "minimum": 0},
+        "tokens": {"type": ["integer", "null"], "minimum": 0},
+        "cost_usd": {"type": ["number", "null"], "minimum": 0}
+      }
+    },
+    "lane_agent_mapping": {
+      "type": "object",
+      "propertyNames": {"$ref": "#/$defs/metadataId"},
+      "additionalProperties": {"$ref": "#/$defs/metadataRef"}
+    },
+    "prospectivity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "registered_at",
+        "first_event_at",
+        "digest_bound",
+        "chronological",
+        "external_time_authority"
+      ],
+      "properties": {
+        "registered_at": {"type": "string", "format": "date-time"},
+        "first_event_at": {"type": ["string", "null"], "format": "date-time"},
+        "digest_bound": {"type": "boolean"},
+        "chronological": {"type": "boolean"},
+        "external_time_authority": {"type": "boolean"}
+      }
+    },
+    "violations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["code", "lane_id", "detail"],
+        "properties": {
+          "code": {"$ref": "#/$defs/metadataId"},
+          "lane_id": {"$ref": "#/$defs/boundedText"},
+          "detail": {"$ref": "#/$defs/boundedText"}
+        }
+      }
+    },
+    "observed_events_digest": {"$ref": "#/$defs/digest"},
+    "claim_ceiling": {"$ref": "#/$defs/boundedText"}
+  },
+  "$defs": {
+    "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "boundedText": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "pattern": "^[^\u0000-\u001F]+$"
+    },
+    "metadataId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,127}$"
+    },
+    "metadataRef": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9/][A-Za-z0-9._:/#@+-]{0,255}$"
+    },
+    "refs": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"$ref": "#/$defs/metadataId"}
+    }
+  }
+}

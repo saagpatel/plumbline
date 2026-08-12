@@ -1,0 +1,169 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://plumbline.dev/schema/sanitized-replay-fixture-v1.json",
+  "title": "SanitizedReplayFixtureV1",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "fixture_id",
+    "source",
+    "resource",
+    "spans",
+    "expected_assertion",
+    "safety"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": { "const": "SanitizedReplayFixtureV1" },
+    "fixture_id": { "$ref": "#/$defs/opaque_id" },
+    "source": {
+      "type": "object",
+      "required": ["trace_id", "selected_span_id", "selector_kind"],
+      "additionalProperties": false,
+      "properties": {
+        "trace_id": { "$ref": "#/$defs/opaque_id" },
+        "selected_span_id": { "$ref": "#/$defs/opaque_id" },
+        "selector_kind": { "enum": ["trace", "span", "finding", "outcome"] }
+      }
+    },
+    "resource": {
+      "type": "object",
+      "required": ["service.name", "plumbline.source.version", "harness.name"],
+      "additionalProperties": false,
+      "properties": {
+        "service.name": { "const": "plumbline.synthetic-replay" },
+        "plumbline.source.version": { "$ref": "#/$defs/bounded_text" },
+        "harness.name": { "$ref": "#/$defs/bounded_text" }
+      }
+    },
+    "spans": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 10000,
+      "items": { "$ref": "#/$defs/span" }
+    },
+    "expected_assertion": {
+      "type": "object",
+      "required": ["kind", "target_span_id", "operator", "expected"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "enum": [
+            "span_failure",
+            "span_status",
+            "hook_verdict",
+            "error_class",
+            "finding",
+            "run_outcome"
+          ]
+        },
+        "target_span_id": { "$ref": "#/$defs/opaque_id" },
+        "operator": { "const": "equals" },
+        "expected": { "$ref": "#/$defs/bounded_text" }
+      }
+    },
+    "safety": {
+      "type": "object",
+      "required": ["artifact_mode", "contains_executable_payloads", "prohibited_capabilities"],
+      "additionalProperties": false,
+      "properties": {
+        "artifact_mode": { "const": "inert_data_only" },
+        "contains_executable_payloads": { "const": false },
+        "prohibited_capabilities": {
+          "const": [
+            "credential_access",
+            "filesystem_mutation",
+            "network",
+            "provider_call",
+            "shell"
+          ]
+        }
+      }
+    }
+  },
+  "$defs": {
+    "opaque_id": {
+      "type": "string",
+      "pattern": "^[a-z]+_[0-9a-f]{20}$"
+    },
+    "bounded_text": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/@+-]{0,127}$"
+    },
+    "span": {
+      "type": "object",
+      "required": [
+        "span_id",
+        "sequence",
+        "kind",
+        "status",
+        "attributes",
+        "parent_span_id",
+        "caused_by_span_id",
+        "agent_context_id"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "span_id": { "$ref": "#/$defs/opaque_id" },
+        "sequence": { "type": "integer", "minimum": 0 },
+        "kind": { "$ref": "#/$defs/bounded_text" },
+        "status": { "enum": ["ok", "error", "interrupted", null] },
+        "attributes": { "$ref": "#/$defs/attributes" },
+        "parent_span_id": { "oneOf": [{ "$ref": "#/$defs/opaque_id" }, { "type": "null" }] },
+        "caused_by_span_id": {
+          "oneOf": [{ "$ref": "#/$defs/opaque_id" }, { "type": "null" }]
+        },
+        "agent_context_id": {
+          "oneOf": [{ "$ref": "#/$defs/opaque_id" }, { "type": "null" }]
+        },
+        "error_class": { "$ref": "#/$defs/bounded_text" }
+      }
+    },
+    "attributes": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "tool": {
+          "type": "object",
+          "required": ["operation", "name", "argument_keys", "result_kind", "descriptor_mode"],
+          "additionalProperties": false,
+          "properties": {
+            "operation": { "$ref": "#/$defs/bounded_text" },
+            "name": { "$ref": "#/$defs/bounded_text" },
+            "argument_keys": {
+              "type": "array",
+              "uniqueItems": true,
+              "items": { "$ref": "#/$defs/bounded_text" }
+            },
+            "result_kind": {
+              "oneOf": [{ "$ref": "#/$defs/bounded_text" }, { "type": "null" }]
+            },
+            "descriptor_mode": { "const": "inert" }
+          }
+        },
+        "gen_ai.operation.name": { "$ref": "#/$defs/bounded_text" },
+        "gen_ai.response.finish_reasons": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/bounded_text" }
+        },
+        "harness.hook.name": { "$ref": "#/$defs/bounded_text" },
+        "harness.hook.event": { "$ref": "#/$defs/bounded_text" },
+        "harness.hook.verdict": { "$ref": "#/$defs/bounded_text" },
+        "harness.hook.prevented_continuation": { "type": "boolean" },
+        "harness.hook.target_span_id": { "$ref": "#/$defs/opaque_id" },
+        "agent.decision.kind": { "$ref": "#/$defs/bounded_text" },
+        "agent.decision.on_plan": { "type": "boolean" },
+        "agent.type": { "$ref": "#/$defs/bounded_text" },
+        "agent.spawns_subagent_id": { "$ref": "#/$defs/opaque_id" },
+        "harness.memory.op": { "$ref": "#/$defs/bounded_text" },
+        "harness.memory.scope": { "$ref": "#/$defs/bounded_text" },
+        "harness.compaction.reason": { "$ref": "#/$defs/bounded_text" },
+        "harness.mode.kind": { "$ref": "#/$defs/bounded_text" },
+        "harness.mode.from": { "$ref": "#/$defs/bounded_text" },
+        "harness.mode.to": { "$ref": "#/$defs/bounded_text" }
+      }
+    }
+  }
+}

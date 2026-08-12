@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://plumbline.dev/schema/span-to-test-reduction-receipt-v1.json",
+  "title": "SpanToTestReductionReceiptV1",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "generator_version",
+    "fixture_id",
+    "source",
+    "reduction",
+    "transformations",
+    "claim_ceiling"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": { "const": "SpanToTestReductionReceiptV1" },
+    "generator_version": { "const": "1.0.0" },
+    "fixture_id": { "$ref": "#/$defs/opaque_id" },
+    "source": {
+      "type": "object",
+      "required": [
+        "trace_id",
+        "selected_span_id",
+        "source_fingerprint",
+        "request_fingerprint"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "trace_id": { "$ref": "#/$defs/opaque_id" },
+        "selected_span_id": { "$ref": "#/$defs/opaque_id" },
+        "source_fingerprint": { "$ref": "#/$defs/opaque_id" },
+        "request_fingerprint": { "$ref": "#/$defs/opaque_id" }
+      }
+    },
+    "reduction": {
+      "type": "object",
+      "required": ["source_span_count", "retained_span_count", "removed_span_count", "algorithm"],
+      "additionalProperties": false,
+      "properties": {
+        "source_span_count": { "type": "integer", "minimum": 1 },
+        "retained_span_count": { "type": "integer", "minimum": 1 },
+        "removed_span_count": { "type": "integer", "minimum": 0 },
+        "algorithm": { "const": "selected_subtree_plus_ancestry_and_causal_closure_v1" }
+      }
+    },
+    "transformations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["span_id", "field_id", "category", "action"],
+        "additionalProperties": false,
+        "properties": {
+          "span_id": { "$ref": "#/$defs/opaque_id" },
+          "field_id": { "$ref": "#/$defs/opaque_id" },
+          "category": {
+            "enum": [
+              "binary_data",
+              "email",
+              "environment_or_secret",
+              "home_or_environment_path",
+              "identifier",
+              "model_content_or_exception_text",
+              "non_whitelisted_attribute",
+              "oversized_content",
+              "timestamp",
+              "token",
+              "tool_arguments_or_results",
+              "url"
+            ]
+          },
+          "action": { "enum": ["pseudonymized", "removed", "replaced_with_sequence"] }
+        }
+      }
+    },
+    "claim_ceiling": {
+      "const": "Structural reproduction is not proof of provider or production reproduction."
+    }
+  },
+  "$defs": {
+    "opaque_id": { "type": "string", "pattern": "^[a-z]+_[0-9a-f]{20}$" }
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://plumbline.dev/schema/span-to-test-generation-request-v1.json",
+  "title": "SpanToTestGenerationRequestV1",
+  "type": "object",
+  "required": ["schema_version", "selector"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": { "const": "SpanToTestGenerationRequestV1" },
+    "selector": {
+      "type": "object",
+      "required": ["kind", "value"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": { "enum": ["trace", "span", "finding", "outcome"] },
+        "value": { "type": "string", "minLength": 1, "maxLength": 512 }
+      }
+    }
+  }
+}

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 from dataclasses import asdict
@@ -14,6 +15,16 @@ from plumbline.scorer.judge import AnthropicBackend, OllamaBackend, judge_run
 from plumbline.scorer.score import score
 from plumbline.scorer.trace import Trace
 from plumbline.scorer.validate import format_report, load_corpus, validate_judge
+from plumbline.span_to_test import (
+    REQUEST_VERSION,
+    SpanToTestContractError,
+    generate_span_to_test,
+    load_trace,
+    preflight_output_paths,
+    render_pytest_skeleton,
+    write_json_output,
+    write_text_output,
+)
 from plumbline.trajectory import (
     TrajectoryContractError,
     aggregate_outcome_bound_trajectories,
@@ -172,6 +183,61 @@ def _cmd_workgraph_shadow(args: argparse.Namespace) -> int:
     return 0
 
 
+def _require_sibling_outputs(fixture_output: Path, pytest_output: Path | None) -> None:
+    if pytest_output is not None and pytest_output.parent != fixture_output.parent:
+        message = "--pytest-output must be in the same directory as --output"
+        raise SpanToTestContractError(message)
+
+
+def _require_source_unchanged(source: Path, before_digest: str) -> None:
+    after_digest = hashlib.sha256(source.read_bytes()).hexdigest()
+    if after_digest != before_digest:
+        message = "source trace changed during generation"
+        raise SpanToTestContractError(message)
+
+
+def _cmd_span_to_test(args: argparse.Namespace) -> int:
+    source = Path(args.source)
+    selector_kind = next(
+        kind for kind in ("trace", "span", "finding", "outcome") if getattr(args, kind)
+    )
+    request = {
+        "schema_version": REQUEST_VERSION,
+        "selector": {"kind": selector_kind, "value": getattr(args, selector_kind)},
+    }
+    output_args = [Path(args.output)]
+    if args.receipt_output:
+        output_args.append(Path(args.receipt_output))
+    if args.pytest_output:
+        output_args.append(Path(args.pytest_output))
+    try:
+        before_digest = hashlib.sha256(source.read_bytes()).hexdigest()
+        trace = load_trace(source)
+        fixture, receipt = generate_span_to_test(trace, request)
+        outputs = preflight_output_paths(source, output_args, overwrite=args.force)
+        fixture_output = outputs[0]
+        next_output = 1
+        receipt_output = None
+        if args.receipt_output:
+            receipt_output = outputs[next_output]
+            next_output += 1
+        pytest_output = outputs[next_output] if args.pytest_output else None
+        _require_sibling_outputs(fixture_output, pytest_output)
+        write_json_output(fixture_output, fixture, overwrite=args.force)
+        if receipt_output is not None:
+            write_json_output(receipt_output, receipt, overwrite=args.force)
+        if pytest_output is not None:
+            skeleton = render_pytest_skeleton(fixture_output.name)
+            write_text_output(pytest_output, skeleton, overwrite=args.force)
+        _require_source_unchanged(source, before_digest)
+    except (OSError, SpanToTestContractError) as exc:
+        sys.stderr.write(f"INVALID {exc}\n")
+        return 2
+    if receipt_output is None:
+        _render_json(receipt, None)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:  # noqa: PLR0915
     parser = argparse.ArgumentParser(prog="plumbline", description="Plumbline trace tooling")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -291,6 +357,32 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0915
     wg.add_argument("-o", "--output", help="Output path (default: stdout)")
     wg.add_argument("--gate", action="store_true", help="Exit non-zero unless disposition is GO")
     wg.set_defaults(func=_cmd_workgraph_shadow)
+
+    st = sub.add_parser(
+        "span-to-test",
+        help="Reduce a failing span subtree to an inert deterministic replay fixture",
+    )
+    st.add_argument("source", help="Source Plumbline trace JSON")
+    selector = st.add_mutually_exclusive_group(required=True)
+    selector.add_argument("--trace", help="Select the first failure in this exact run_id")
+    selector.add_argument("--span", help="Select an exact step_id")
+    selector.add_argument("--finding", help="Select an exact finding identifier")
+    selector.add_argument("--outcome", help="Select a run outcome or span status")
+    st.add_argument("-o", "--output", required=True, help="Explicit fixture output path")
+    st.add_argument(
+        "--receipt-output",
+        help="Explicit reduction-receipt output path (default: print receipt to stdout)",
+    )
+    st.add_argument(
+        "--pytest-output",
+        help="Explicit sibling path for an optional local-only pytest skeleton",
+    )
+    st.add_argument(
+        "--force",
+        action="store_true",
+        help="Explicitly replace regular output files; symlinks are always refused",
+    )
+    st.set_defaults(func=_cmd_span_to_test)
 
     args = parser.parse_args(argv)
     return int(args.func(args))

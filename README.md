@@ -33,6 +33,7 @@ Google ADK). The gap is the **intersection** none of them fills:
 | **3** | CI gate (`score --gate`, bare exit code) + an OTel `semantic-conventions-genai` extension proposal ([`OTEL-PROPOSAL.md`](OTEL-PROPOSAL.md)) | shipped |
 | **4** | **Inference layer: outcome/plan capture + structural & text-signal decision inference, so the judge works on real recorded traces ([`PHASE4.md`](PHASE4.md))** | **shipped (v0.2)** |
 | **5** | **Metadata-only outcome binding + passive WorkGraphV1 shadow reconciliation ([`OUTCOME-BOUND-TRAJECTORY.md`](OUTCOME-BOUND-TRAJECTORY.md), [`WORKGRAPH-SHADOW.md`](WORKGRAPH-SHADOW.md))** | **shipped (v0.3)** |
+| **P10** | **Safe span-to-test reduction into deterministic inert replay fixtures ([`SPAN-TO-TEST.md`](SPAN-TO-TEST.md))** | **shipped (v0.4)** |
 
 ## Scoring (Phase 2)
 
@@ -217,6 +218,9 @@ Design, inference rules, the privacy decision, and the honest coverage/precision
 - WorkGraph prospective registration contract: [`schema/workgraph-pilot-registration.schema.json`](schema/workgraph-pilot-registration.schema.json)
 - WorkGraph observed-event contract: [`schema/workgraph-observed-events.schema.json`](schema/workgraph-observed-events.schema.json)
 - Passive WorkGraph report contract: [`schema/workgraph-shadow-trace.schema.json`](schema/workgraph-shadow-trace.schema.json)
+- Span-to-test generation request: [`schema/span-to-test-generation-request.schema.json`](schema/span-to-test-generation-request.schema.json)
+- Sanitized inert replay fixture: [`schema/sanitized-replay-fixture.schema.json`](schema/sanitized-replay-fixture.schema.json)
+- Reduction/provenance receipt: [`schema/span-to-test-reduction-receipt.schema.json`](schema/span-to-test-reduction-receipt.schema.json)
 
 Validate the example against the schema:
 
@@ -249,6 +253,20 @@ plumbline workgraph-shadow compiled-plan.json registration.json observed-events.
 See [`OUTCOME-BOUND-TRAJECTORY.md`](OUTCOME-BOUND-TRAJECTORY.md) and
 [`WORKGRAPH-SHADOW.md`](WORKGRAPH-SHADOW.md) for contracts, kill criteria, privacy/lifecycle policy,
 compatibility, and claim ceilings.
+
+## Span-to-test generation (P10)
+
+Reduce a failing span subtree to a compact, deterministic fixture that preserves
+topology and the selected failure signal while removing captured content:
+
+```sh
+plumbline span-to-test trace.json --span STEP_ID -o fixture.json \
+  --receipt-output reduction.json --pytest-output test_fixture.py
+```
+
+The default artifact is inert data, never an executable transcript. See
+[`SPAN-TO-TEST.md`](SPAN-TO-TEST.md) for the threat model, reduction algorithm,
+contracts, five-minute demo, standards snapshot, and claim ceiling.
 
 ## Recording a Claude Code session (Phase 1)
 

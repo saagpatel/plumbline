@@ -4,6 +4,23 @@ All notable changes to Plumbline are recorded here. The trace **schema** version
 (`plumbline_version`, currently `0.1.0`) is independent of this package version; Phase 4
 populates existing schema fields and did not change the schema.
 
+## 0.4.0
+
+### Added
+
+- P10 span-to-test generator with trace/span/finding/outcome selectors,
+  minimum topology and causal closure, deterministic pseudonyms, inert tool
+  descriptors, explicit-output confinement, and overwrite refusal.
+- Versioned request, sanitized replay fixture, and reduction receipt contracts;
+  optional local-only pytest scaffolding; golden privacy/reduction fixtures.
+
+### Boundaries
+
+- Generated artifacts never execute captured commands, tools, providers, or
+  credentials. Structural reproduction is not provider or production proof.
+- P07 retains ownership of ancestry and gap detection; P10 owns only safe
+  minimization, sanitization, fixture generation, and local replay scaffolding.
+
 ## 0.3.0
 
 ### Added

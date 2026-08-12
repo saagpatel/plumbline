@@ -1,0 +1,100 @@
+{
+  "expected_assertion": {
+    "expected": "error",
+    "kind": "span_status",
+    "operator": "equals",
+    "target_span_id": "span_cc9229ca6138c2231260"
+  },
+  "fixture_id": "fixture_23cb91f1fc89f3b96bc2",
+  "resource": {
+    "harness.name": "synthetic-harness",
+    "plumbline.source.version": "0.1.0",
+    "service.name": "plumbline.synthetic-replay"
+  },
+  "safety": {
+    "artifact_mode": "inert_data_only",
+    "contains_executable_payloads": false,
+    "prohibited_capabilities": [
+      "credential_access",
+      "filesystem_mutation",
+      "network",
+      "provider_call",
+      "shell"
+    ]
+  },
+  "schema_version": "SanitizedReplayFixtureV1",
+  "source": {
+    "selected_span_id": "span_cc9229ca6138c2231260",
+    "selector_kind": "span",
+    "trace_id": "trace_adf492944e9050a31c8e"
+  },
+  "spans": [
+    {
+      "agent_context_id": null,
+      "attributes": {
+        "gen_ai.operation.name": "chat"
+      },
+      "caused_by_span_id": null,
+      "kind": "llm",
+      "parent_span_id": null,
+      "sequence": 0,
+      "span_id": "span_4c7c38bc2c03a6bcd29c",
+      "status": "ok"
+    },
+    {
+      "agent_context_id": null,
+      "attributes": {
+        "tool": {
+          "argument_keys": [
+            "binary",
+            "command",
+            "email",
+            "environment",
+            "home_path",
+            "unicode"
+          ],
+          "descriptor_mode": "inert",
+          "name": "Shell",
+          "operation": "execute_tool",
+          "result_kind": "shell"
+        }
+      },
+      "caused_by_span_id": null,
+      "error_class": "TimeoutError",
+      "kind": "tool_call",
+      "parent_span_id": "span_4c7c38bc2c03a6bcd29c",
+      "sequence": 2,
+      "span_id": "span_cc9229ca6138c2231260",
+      "status": "error"
+    },
+    {
+      "agent_context_id": null,
+      "attributes": {
+        "harness.hook.event": "PostToolUseFailure",
+        "harness.hook.name": "egress-guard",
+        "harness.hook.prevented_continuation": true,
+        "harness.hook.target_span_id": "span_cc9229ca6138c2231260",
+        "harness.hook.verdict": "deny"
+      },
+      "caused_by_span_id": "span_cc9229ca6138c2231260",
+      "kind": "hook",
+      "parent_span_id": "span_4c7c38bc2c03a6bcd29c",
+      "sequence": 3,
+      "span_id": "span_415bf3f3ead8602b1c62",
+      "status": "ok"
+    },
+    {
+      "agent_context_id": null,
+      "attributes": {
+        "agent.decision.kind": "escalate",
+        "agent.decision.on_plan": false
+      },
+      "caused_by_span_id": "span_415bf3f3ead8602b1c62",
+      "kind": "decision",
+      "parent_span_id": "span_4c7c38bc2c03a6bcd29c",
+      "sequence": 4,
+      "span_id": "span_8b84e46d036243837a7a",
+      "status": "ok"
+    }
+  ]
+}

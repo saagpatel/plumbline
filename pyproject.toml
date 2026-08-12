@@ -1,6 +1,6 @@
 [project]
 name = "plumbline"
-version = "0.3.0"
+version = "0.4.0"
 description = "Open, OTel-compatible agent-trace schema + offline decision-path recorder/scorer for coding-agent harnesses"
 readme = "README.md"
 license = "MIT"
@@ -40,6 +40,15 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["S101", "PLR2004", "ANN", "INP001"]
+"src/plumbline/span_to_test.py" = [
+  "C901",    # fail-closed validators intentionally enumerate contract branches
+  "EM101",   # stable contract errors are clearer at their exact failure sites
+  "EM102",
+  "PLR0911", # sanitizer classification is an explicit ordered policy table
+  "PLR0912",
+  "PLR0915",
+  "TRY003",
+]
 
 [tool.pytest.ini_options]
 addopts = "-q --cov=plumbline --cov-report=term-missing --cov-fail-under=80"

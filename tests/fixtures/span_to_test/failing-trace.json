@@ -1,0 +1,115 @@
+{
+  "plumbline_version": "0.1.0",
+  "run": {
+    "run_id": "trace-secret-source-42",
+    "harness": { "name": "synthetic-harness", "version": "1.0" },
+    "started_at": "2026-08-11T12:00:00Z",
+    "ended_at": "2026-08-11T12:00:06Z",
+    "model": "private-model-name",
+    "workspace": {
+      "cwd": "/Users/alice/private-project",
+      "environment": { "API_TOKEN": "sk-ABCDEFGHIJKLMNOPQRSTUV" }
+    },
+    "plan": {
+      "source": "user_prompt",
+      "statement": "Email alice@example.com and use secret sentinel P10-RAW-SECRET."
+    },
+    "outcome": {
+      "status": "failed",
+      "summary": "Provider failure exposed P10-RAW-SECRET at https://private.example/path."
+    }
+  },
+  "steps": [
+    {
+      "step_id": "root-llm",
+      "kind": "llm",
+      "started_at": "2026-08-11T12:00:00Z",
+      "status": "ok",
+      "attributes": {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.input.messages": [{ "content": "P10-RAW-SECRET" }],
+        "gen_ai.output.messages": [{ "content": "calling a tool" }]
+      }
+    },
+    {
+      "step_id": "irrelevant-before",
+      "parent_step_id": "root-llm",
+      "kind": "tool_call",
+      "started_at": "2026-08-11T12:00:01Z",
+      "status": "ok",
+      "attributes": {
+        "gen_ai.tool.name": "UnrelatedRead",
+        "tool.arguments": { "path": "/repo/public.txt" },
+        "tool.result.kind": "read",
+        "tool.result.content": "not relevant"
+      }
+    },
+    {
+      "step_id": "failing-tool",
+      "parent_step_id": "root-llm",
+      "kind": "tool_call",
+      "started_at": "2026-08-11T12:00:02Z",
+      "ended_at": "2026-08-11T12:00:03Z",
+      "status": "error",
+      "attributes": {
+        "gen_ai.operation.name": "execute_tool",
+        "gen_ai.tool.name": "Shell",
+        "gen_ai.tool.type": "function",
+        "tool.arguments": {
+          "command": "curl https://private.example --header 'Bearer abcdefghijklmnop'",
+          "email": "alice@example.com",
+          "home_path": "/Users/alice/private-project/.env",
+          "environment": { "API_TOKEN": "sk-ABCDEFGHIJKLMNOPQRSTUV" },
+          "unicode": "café 🚀",
+          "binary": "QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFB"
+        },
+        "tool.result.kind": "shell",
+        "tool.result.stdout": "P10-RAW-SECRET",
+        "tool.result.stderr": "alice@example.com failed",
+        "error.type": "TimeoutError",
+        "exception.message": "Token sk-ABCDEFGHIJKLMNOPQRSTUV rejected"
+      }
+    },
+    {
+      "step_id": "denial-hook",
+      "parent_step_id": "root-llm",
+      "caused_by": "failing-tool",
+      "kind": "hook",
+      "started_at": "2026-08-11T12:00:03Z",
+      "status": "ok",
+      "attributes": {
+        "harness.hook.name": "egress-guard",
+        "harness.hook.event": "PostToolUseFailure",
+        "harness.hook.verdict": "deny",
+        "harness.hook.prevented_continuation": true,
+        "harness.hook.target_step_id": "failing-tool",
+        "harness.hook.reason": "Blocked https://private.example for alice@example.com"
+      }
+    },
+    {
+      "step_id": "failure-decision",
+      "parent_step_id": "root-llm",
+      "caused_by": "denial-hook",
+      "kind": "decision",
+      "started_at": "2026-08-11T12:00:04Z",
+      "status": "ok",
+      "attributes": {
+        "agent.decision.kind": "escalate",
+        "agent.decision.on_plan": false,
+        "agent.decision.rationale": "Do not retry P10-RAW-SECRET."
+      }
+    },
+    {
+      "step_id": "irrelevant-after",
+      "parent_step_id": "root-llm",
+      "kind": "tool_call",
+      "started_at": "2026-08-11T12:00:05Z",
+      "status": "ok",
+      "attributes": {
+        "gen_ai.tool.name": "UnrelatedWrite",
+        "tool.arguments": { "path": "/tmp/nope", "content": "not relevant" },
+        "tool.result.kind": "write"
+      }
+    }
+  ]
+}

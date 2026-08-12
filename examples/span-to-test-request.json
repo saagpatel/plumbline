@@ -1,0 +1,7 @@
+{
+  "schema_version": "SpanToTestGenerationRequestV1",
+  "selector": {
+    "kind": "span",
+    "value": "failing-tool"
+  }
+}

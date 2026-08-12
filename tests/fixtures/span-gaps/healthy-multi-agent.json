@@ -1,0 +1,14 @@
+{
+  "capture_scope": {"spans":"complete","events":"complete","agent_lifecycle":"complete","plans":"complete","outcomes":"complete"},
+  "spans": [
+    {"trace_id":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","span_id":"1000000000000001","name":"create_agent coordinator","start_time_unix_nano":1,"end_time_unix_nano":2,"attributes":{"gen_ai.operation.name":"create_agent","gen_ai.agent.id":"coordinator"}},
+    {"trace_id":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","span_id":"1000000000000002","name":"create_agent worker","start_time_unix_nano":1,"end_time_unix_nano":2,"attributes":{"gen_ai.operation.name":"create_agent","gen_ai.agent.id":"worker"}},
+    {"trace_id":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","span_id":"1000000000000003","name":"invoke_workflow delegation","start_time_unix_nano":3,"end_time_unix_nano":200,"attributes":{"gen_ai.operation.name":"invoke_workflow","gen_ai.workflow.id":"wf-2"}},
+    {"trace_id":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","span_id":"1000000000000004","parent_span_id":"1000000000000003","name":"plan","start_time_unix_nano":4,"end_time_unix_nano":10,"attributes":{"gen_ai.operation.name":"plan","gen_ai.workflow.id":"wf-2"}},
+    {"trace_id":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","span_id":"1000000000000005","parent_span_id":"1000000000000004","name":"invoke_agent coordinator","start_time_unix_nano":11,"end_time_unix_nano":180,"attributes":{"gen_ai.operation.name":"invoke_agent","gen_ai.agent.id":"coordinator","gen_ai.workflow.id":"wf-2"}},
+    {"trace_id":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","span_id":"1000000000000006","parent_span_id":"1000000000000005","name":"invoke_agent worker","start_time_unix_nano":20,"end_time_unix_nano":150,"attributes":{"gen_ai.operation.name":"invoke_agent","gen_ai.agent.id":"worker","gen_ai.workflow.id":"wf-2"}},
+    {"trace_id":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","span_id":"1000000000000007","parent_span_id":"1000000000000006","name":"execute_tool search","start_time_unix_nano":30,"end_time_unix_nano":70,"attributes":{"gen_ai.operation.name":"execute_tool","gen_ai.tool.call.id":"parallel-a","gen_ai.workflow.id":"wf-2"},"events":[{"name":"tool_result","time_unix_nano":65,"attributes":{"gen_ai.tool.call.id":"parallel-a"}}]},
+    {"trace_id":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","span_id":"1000000000000008","parent_span_id":"1000000000000006","name":"execute_tool fetch","start_time_unix_nano":30,"end_time_unix_nano":75,"attributes":{"gen_ai.operation.name":"execute_tool","gen_ai.tool.call.id":"parallel-b","gen_ai.workflow.id":"wf-2"},"events":[{"name":"tool_result","time_unix_nano":70,"attributes":{"gen_ai.tool.call.id":"parallel-b"}}]},
+    {"trace_id":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","span_id":"1000000000000009","parent_span_id":"1000000000000005","name":"outcome","start_time_unix_nano":170,"end_time_unix_nano":175,"attributes":{"gen_ai.workflow.id":"wf-2"}}
+  ]
+}

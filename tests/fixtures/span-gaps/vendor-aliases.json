@@ -1,0 +1,11 @@
+{
+  "capture_scope":{"spans":"complete","events":"complete","agent_lifecycle":"complete","plans":"complete","outcomes":"complete"},
+  "spans":[
+    {"trace_id":"abababababababababababababababab","span_id":"5000000000000001","name":"vendor.agent.build","start_time_unix_nano":1,"end_time_unix_nano":2,"attributes":{"vendor.agent":"alias-agent","gen_ai.agent.id":"alias-agent"}},
+    {"trace_id":"abababababababababababababababab","span_id":"5000000000000002","name":"vendor.flow.run","start_time_unix_nano":3,"end_time_unix_nano":100,"attributes":{"vendor.flow":"alias-flow","gen_ai.workflow.id":"alias-flow"}},
+    {"trace_id":"abababababababababababababababab","span_id":"5000000000000003","parent_span_id":"5000000000000002","name":"vendor.plan.make","start_time_unix_nano":4,"end_time_unix_nano":10,"attributes":{}},
+    {"trace_id":"abababababababababababababababab","span_id":"5000000000000004","parent_span_id":"5000000000000003","name":"vendor.agent.run","start_time_unix_nano":11,"end_time_unix_nano":90,"attributes":{"vendor.agent":"alias-agent","vendor.flow":"alias-flow","gen_ai.agent.id":"alias-agent","gen_ai.workflow.id":"alias-flow"}},
+    {"trace_id":"abababababababababababababababab","span_id":"5000000000000005","parent_span_id":"5000000000000004","name":"vendor.tool.run","start_time_unix_nano":20,"end_time_unix_nano":30,"attributes":{"vendor.call":"vc-1","vendor.flow":"alias-flow","gen_ai.tool.call.id":"vc-1","gen_ai.workflow.id":"alias-flow"},"events":[{"name":"vendor.tool.done","time_unix_nano":25,"attributes":{"vendor.call":"vc-1","gen_ai.tool.call.id":"vc-1"}}]},
+    {"trace_id":"abababababababababababababababab","span_id":"5000000000000006","parent_span_id":"5000000000000004","name":"vendor.done","start_time_unix_nano":80,"end_time_unix_nano":85,"attributes":{"vendor.flow":"alias-flow","gen_ai.workflow.id":"alias-flow"}}
+  ]
+}

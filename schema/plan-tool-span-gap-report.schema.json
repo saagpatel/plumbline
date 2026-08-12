@@ -1,0 +1,136 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/saagpatel/plumbline/schema/plan-tool-span-gap-report.schema.json",
+  "title": "PlanToolSpanGapReportV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "standards_snapshot",
+    "input",
+    "mapping",
+    "disposition",
+    "summary",
+    "findings",
+    "evidence_index",
+    "claim_ceiling"
+  ],
+  "properties": {
+    "schema_version": { "const": "PlanToolSpanGapReportV1" },
+    "standards_snapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["as_of", "otel_genai_commit", "otel_genai_status", "otel_core_semconv_version", "interpretation"],
+      "properties": {
+        "as_of": { "type": "string", "format": "date" },
+        "otel_genai_commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "otel_genai_status": { "const": "Development" },
+        "otel_core_semconv_version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" },
+        "interpretation": { "$ref": "#/$defs/text" }
+      }
+    },
+    "input": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["format", "digest", "capture_scope", "node_count"],
+      "properties": {
+        "format": { "enum": ["plumbline", "otel"] },
+        "digest": { "$ref": "#/$defs/digest" },
+        "capture_scope": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["spans", "events", "agent_lifecycle", "plans", "outcomes"],
+          "properties": {
+            "spans": { "$ref": "#/$defs/capture" },
+            "events": { "$ref": "#/$defs/capture" },
+            "agent_lifecycle": { "$ref": "#/$defs/capture" },
+            "plans": { "$ref": "#/$defs/capture" },
+            "outcomes": { "$ref": "#/$defs/capture" }
+          }
+        },
+        "node_count": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "mapping": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "digest", "rule_count", "mapped_node_count", "unmapped_node_count"],
+      "properties": {
+        "schema_version": { "const": "PlanToolSpanRoleMapV1" },
+        "digest": { "$ref": "#/$defs/digest" },
+        "rule_count": { "type": "integer", "minimum": 0 },
+        "mapped_node_count": { "type": "integer", "minimum": 0 },
+        "unmapped_node_count": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "disposition": { "enum": ["PASS", "FAIL", "UNKNOWN"] },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["finding_count", "violation_count", "unknown_count", "error_count", "warning_count"],
+      "properties": {
+        "finding_count": { "type": "integer", "minimum": 0 },
+        "violation_count": { "type": "integer", "minimum": 0 },
+        "unknown_count": { "type": "integer", "minimum": 0 },
+        "error_count": { "type": "integer", "minimum": 0 },
+        "warning_count": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["finding_id", "code", "classification", "severity", "confidence", "message", "node_ids", "evidence_refs"],
+        "properties": {
+          "finding_id": { "type": "string", "pattern": "^G[0-9]{4}$" },
+          "code": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]{1,63}$" },
+          "classification": { "enum": ["VIOLATION", "UNKNOWN"] },
+          "severity": { "enum": ["error", "warning", "info"] },
+          "confidence": { "enum": ["certain", "high", "medium", "low"] },
+          "message": { "$ref": "#/$defs/text" },
+          "node_ids": { "$ref": "#/$defs/textArray" },
+          "evidence_refs": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": { "type": "string", "pattern": "^E[0-9]{4}$" }
+          }
+        }
+      }
+    },
+    "evidence_index": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["evidence_id", "source_path", "source_format", "node_id", "trace_id", "raw_name", "semantic_roles", "mapping_ids"],
+        "properties": {
+          "evidence_id": { "type": "string", "pattern": "^E[0-9]{4}$" },
+          "source_path": { "$ref": "#/$defs/text" },
+          "source_format": { "enum": ["plumbline", "otel"] },
+          "node_id": { "$ref": "#/$defs/text" },
+          "trace_id": { "type": ["string", "null"], "maxLength": 512 },
+          "raw_name": { "$ref": "#/$defs/text" },
+          "semantic_roles": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": { "enum": ["create_agent", "invoke_agent", "plan", "invoke_workflow", "execute_tool", "tool_result", "outcome", "compaction"] }
+          },
+          "mapping_ids": { "$ref": "#/$defs/textArray" }
+        }
+      }
+    },
+    "claim_ceiling": { "$ref": "#/$defs/text" }
+  },
+  "$defs": {
+    "capture": { "enum": ["complete", "partial", "unknown"] },
+    "digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "text": { "type": "string", "minLength": 1, "maxLength": 1024, "pattern": "^[^\\r\\n]*$" },
+    "textArray": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/text" }
+    }
+  }
+}

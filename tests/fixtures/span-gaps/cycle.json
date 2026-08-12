@@ -1,0 +1,7 @@
+{
+  "capture_scope":{"spans":"complete","events":"complete","agent_lifecycle":"unknown","plans":"complete","outcomes":"complete"},
+  "spans":[
+    {"trace_id":"ffffffffffffffffffffffffffffffff","span_id":"4000000000000001","parent_span_id":"4000000000000002","name":"invoke_workflow cycle","start_time_unix_nano":1,"end_time_unix_nano":100,"attributes":{"gen_ai.operation.name":"invoke_workflow"}},
+    {"trace_id":"ffffffffffffffffffffffffffffffff","span_id":"4000000000000002","parent_span_id":"4000000000000001","name":"plan cycle","start_time_unix_nano":2,"end_time_unix_nano":90,"attributes":{"gen_ai.operation.name":"plan"}}
+  ]
+}

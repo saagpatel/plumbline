@@ -1,0 +1,6 @@
+{
+  "capture_scope":{"spans":"partial","events":"partial","agent_lifecycle":"partial","plans":"partial","outcomes":"partial"},
+  "spans":[
+    {"trace_id":"cccccccccccccccccccccccccccccccc","span_id":"2000000000000001","name":"execute_tool shell","start_time_unix_nano":10,"end_time_unix_nano":20,"attributes":{"gen_ai.operation.name":"execute_tool","gen_ai.tool.call.id":"partial-call"}}
+  ]
+}

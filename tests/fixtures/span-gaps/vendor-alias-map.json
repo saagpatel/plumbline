@@ -1,0 +1,13 @@
+{
+  "schema_version":"PlanToolSpanRoleMapV1",
+  "mode":"replace",
+  "mappings":[
+    {"id":"vendor.create","role":"create_agent","match":{"span_name_prefixes":["vendor.agent.build"]}},
+    {"id":"vendor.workflow","role":"invoke_workflow","match":{"span_name_prefixes":["vendor.flow.run"]}},
+    {"id":"vendor.plan","role":"plan","match":{"span_name_prefixes":["vendor.plan.make"]}},
+    {"id":"vendor.invoke","role":"invoke_agent","match":{"span_name_prefixes":["vendor.agent.run"]}},
+    {"id":"vendor.tool","role":"execute_tool","match":{"span_name_prefixes":["vendor.tool.run"]}},
+    {"id":"vendor.result","role":"tool_result","match":{"event_name_prefixes":["vendor.tool.done"]}},
+    {"id":"vendor.outcome","role":"outcome","match":{"span_name_prefixes":["vendor.done"]}}
+  ]
+}

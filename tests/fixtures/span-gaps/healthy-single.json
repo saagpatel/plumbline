@@ -1,0 +1,11 @@
+{
+  "capture_scope": {"spans":"complete","events":"complete","agent_lifecycle":"complete","plans":"complete","outcomes":"complete"},
+  "spans": [
+    {"trace_id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","span_id":"0000000000000001","name":"create_agent researcher","start_time_unix_nano":1,"end_time_unix_nano":2,"attributes":{"gen_ai.operation.name":"create_agent","gen_ai.agent.id":"agent-1"}},
+    {"trace_id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","span_id":"0000000000000002","name":"invoke_workflow demo","start_time_unix_nano":3,"end_time_unix_nano":100,"attributes":{"gen_ai.operation.name":"invoke_workflow","gen_ai.workflow.id":"wf-1"}},
+    {"trace_id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","span_id":"0000000000000003","parent_span_id":"0000000000000002","name":"plan","start_time_unix_nano":4,"end_time_unix_nano":10,"attributes":{"gen_ai.operation.name":"plan","gen_ai.workflow.id":"wf-1"}},
+    {"trace_id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","span_id":"0000000000000004","parent_span_id":"0000000000000003","name":"invoke_agent researcher","start_time_unix_nano":11,"end_time_unix_nano":90,"attributes":{"gen_ai.operation.name":"invoke_agent","gen_ai.agent.id":"agent-1","gen_ai.workflow.id":"wf-1"}},
+    {"trace_id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","span_id":"0000000000000005","parent_span_id":"0000000000000004","name":"execute_tool read","start_time_unix_nano":20,"end_time_unix_nano":35,"attributes":{"gen_ai.operation.name":"execute_tool","gen_ai.tool.name":"read","gen_ai.tool.call.id":"call-1","gen_ai.workflow.id":"wf-1"},"events":[{"name":"tool_result","time_unix_nano":30,"attributes":{"gen_ai.tool.call.id":"call-1"}}]},
+    {"trace_id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","span_id":"0000000000000006","parent_span_id":"0000000000000004","name":"outcome","start_time_unix_nano":80,"end_time_unix_nano":85,"attributes":{"gen_ai.workflow.id":"wf-1"}}
+  ]
+}

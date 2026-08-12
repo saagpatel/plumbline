@@ -34,6 +34,7 @@ Google ADK). The gap is the **intersection** none of them fills:
 | **4** | **Inference layer: outcome/plan capture + structural & text-signal decision inference, so the judge works on real recorded traces ([`PHASE4.md`](PHASE4.md))** | **shipped (v0.2)** |
 | **5** | **Metadata-only outcome binding + passive WorkGraphV1 shadow reconciliation ([`OUTCOME-BOUND-TRAJECTORY.md`](OUTCOME-BOUND-TRAJECTORY.md), [`WORKGRAPH-SHADOW.md`](WORKGRAPH-SHADOW.md))** | **shipped (v0.3)** |
 | **P10** | **Safe span-to-test reduction into deterministic inert replay fixtures ([`SPAN-TO-TEST.md`](SPAN-TO-TEST.md))** | **shipped (v0.4)** |
+| **P07** | **Deterministic plan/tool span ancestry gap finder ([`PLAN-TOOL-SPAN-GAPS.md`](PLAN-TOOL-SPAN-GAPS.md))** | **shipped** |
 
 ## Scoring (Phase 2)
 
@@ -267,6 +268,19 @@ plumbline span-to-test trace.json --span STEP_ID -o fixture.json \
 The default artifact is inert data, never an executable transcript. See
 [`SPAN-TO-TEST.md`](SPAN-TO-TEST.md) for the threat model, reduction algorithm,
 contracts, five-minute demo, standards snapshot, and claim ceiling.
+
+## Plan and tool span gaps (P07)
+
+Analyze Plumbline or OTLP-shaped JSON for broken agent, plan, workflow, tool, and outcome ancestry:
+
+```sh
+plumbline span-gaps run.json --format json --gate
+```
+
+The local-first analyzer preserves scrubbed raw provenance, supports explicit vendor-alias mappings,
+distinguishes deterministic violations from missing-capture `UNKNOWN`s, and makes no network or model
+calls. See [`PLAN-TOOL-SPAN-GAPS.md`](PLAN-TOOL-SPAN-GAPS.md) for invariants, exit codes, extension
+guidance, and a five-minute demo.
 
 ## Recording a Claude Code session (Phase 1)
 

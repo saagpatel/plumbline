@@ -1,0 +1,10 @@
+{
+  "capture_scope":{"spans":"complete","events":"complete","agent_lifecycle":"complete","plans":"complete","outcomes":"complete"},
+  "spans":[
+    {"trace_id":"dddddddddddddddddddddddddddddddd","span_id":"3000000000000001","name":"create_agent orphan","start_time_unix_nano":5,"end_time_unix_nano":4,"attributes":{"gen_ai.operation.name":"create_agent","gen_ai.agent.id":"never-invoked"}},
+    {"trace_id":"dddddddddddddddddddddddddddddddd","span_id":"3000000000000002","parent_span_id":"ffffffffffffffff","name":"invoke_agent ghost","start_time_unix_nano":6,"end_time_unix_nano":20,"attributes":{"gen_ai.operation.name":"invoke_agent","gen_ai.agent.id":"never-created"}},
+    {"trace_id":"dddddddddddddddddddddddddddddddd","span_id":"3000000000000003","name":"tool_result","start_time_unix_nano":7,"end_time_unix_nano":8,"attributes":{"gen_ai.tool.call.id":"missing-call"}},
+    {"trace_id":"dddddddddddddddddddddddddddddddd","span_id":"3000000000000003","name":"outcome","start_time_unix_nano":21,"end_time_unix_nano":22,"attributes":{}},
+    {"trace_id":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee","span_id":"3000000000000004","parent_span_ids":["3000000000000001","3000000000000002"],"name":"execute_tool escaped","start_time_unix_nano":30,"end_time_unix_nano":31,"attributes":{"gen_ai.operation.name":"execute_tool","gen_ai.workflow.id":"missing-workflow"}}
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "plumbline_version":"0.3.0",
+  "capture_scope":{"spans":"complete","events":"complete","agent_lifecycle":"unknown","plans":"complete","outcomes":"complete"},
+  "run":{"run_id":"retry-run","harness":{"name":"synthetic"},"started_at":"2026-08-11T00:00:00Z","ended_at":"2026-08-11T00:00:10Z","plan":{"source":"approved_plan","statement":"Read, retry, finish","items":[{"id":"read","text":"Read input","status":"done"}]},"outcome":{"status":"success","summary":"Synthetic retry completed"}},
+  "steps":[
+    {"step_id":"agent","kind":"agent","started_at":"2026-08-11T00:00:01Z","ended_at":"2026-08-11T00:00:09Z","attributes":{"agent.type":"subagent"}},
+    {"step_id":"read-1","parent_step_id":"agent","kind":"tool_call","started_at":"2026-08-11T00:00:02Z","ended_at":"2026-08-11T00:00:03Z","status":"error","attributes":{"gen_ai.tool.name":"Read","gen_ai.tool.call.id":"read-1","agent.decision.plan_ref":"read"}},
+    {"step_id":"compact","parent_step_id":"agent","kind":"compaction","started_at":"2026-08-11T00:00:04Z","ended_at":"2026-08-11T00:00:05Z","attributes":{"harness.compaction.reason":"bounded context"}},
+    {"step_id":"read-2","parent_step_id":"agent","kind":"tool_call","started_at":"2026-08-11T00:00:06Z","ended_at":"2026-08-11T00:00:07Z","status":"ok","attributes":{"gen_ai.tool.name":"Read","gen_ai.tool.call.id":"read-2","agent.decision.plan_ref":"read","retry.of":"read-1","tool.result.kind":"text"}}
+  ]
+}

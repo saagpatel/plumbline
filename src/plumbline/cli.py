@@ -15,6 +15,12 @@ from plumbline.scorer.judge import AnthropicBackend, OllamaBackend, judge_run
 from plumbline.scorer.score import score
 from plumbline.scorer.trace import Trace
 from plumbline.scorer.validate import format_report, load_corpus, validate_judge
+from plumbline.span_gaps import (
+    SpanGapContractError,
+    analyze_span_gaps,
+    format_span_gap_report,
+    load_json_file,
+)
 from plumbline.span_to_test import (
     REQUEST_VERSION,
     SpanToTestContractError,
@@ -238,6 +244,31 @@ def _cmd_span_to_test(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_span_gaps(args: argparse.Namespace) -> int:
+    try:
+        trace = load_json_file(Path(args.trace))
+        mapping = load_json_file(Path(args.mapping)) if args.mapping else None
+        report = analyze_span_gaps(trace, mapping)
+    except SpanGapContractError as exc:
+        sys.stderr.write(f"INVALID {exc}\n")
+        return 2
+    if args.format == "json":
+        rendered = json.dumps(report, indent=2, sort_keys=True) + "\n"
+    else:
+        rendered = format_span_gap_report(report) + "\n"
+    if args.output:
+        Path(args.output).write_text(rendered, encoding="utf-8")
+    else:
+        sys.stdout.write(rendered)
+    if not args.gate:
+        return 0
+    if report["disposition"] == "FAIL":
+        return 1
+    if report["disposition"] == "UNKNOWN":
+        return 3
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:  # noqa: PLR0915
     parser = argparse.ArgumentParser(prog="plumbline", description="Plumbline trace tooling")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -383,6 +414,24 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0915
         help="Explicitly replace regular output files; symlinks are always refused",
     )
     st.set_defaults(func=_cmd_span_to_test)
+
+    gaps = sub.add_parser(
+        "span-gaps",
+        help="Detect ancestry and workflow gaps in Plumbline or OTLP-shaped trace JSON",
+    )
+    gaps.add_argument("trace", help="Plumbline or OTLP-shaped trace JSON")
+    gaps.add_argument(
+        "--mapping",
+        help="Optional PlanToolSpanRoleMapV1 JSON (extends built-in OTel mappings by default)",
+    )
+    gaps.add_argument("--format", choices=["human", "json"], default="human")
+    gaps.add_argument("-o", "--output", help="Output path (default: stdout)")
+    gaps.add_argument(
+        "--gate",
+        action="store_true",
+        help="Use CI exit codes: 0 PASS, 1 FAIL, 2 invalid input, 3 UNKNOWN",
+    )
+    gaps.set_defaults(func=_cmd_span_gaps)
 
     args = parser.parse_args(argv)
     return int(args.func(args))

@@ -830,13 +830,10 @@ def preflight_output_paths(
         if not parent.is_dir():
             raise SpanToTestContractError(f"output parent is not a directory: {parent}")
         target = parent / output.name
-        if target == source_resolved or (
-            target.exists() and target.samefile(source_resolved)
-        ):
+        if target == source_resolved or (target.exists() and target.samefile(source_resolved)):
             raise SpanToTestContractError("output path must not overwrite the source trace")
         aliases_existing_output = any(
-            target.exists() and prior.exists() and target.samefile(prior)
-            for prior in resolved
+            target.exists() and prior.exists() and target.samefile(prior) for prior in resolved
         )
         if target in resolved or aliases_existing_output:
             raise SpanToTestContractError("output paths must be distinct")

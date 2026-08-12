@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import runpy
+import unicodedata
 from copy import deepcopy
 from pathlib import Path
 
@@ -18,6 +20,7 @@ from plumbline.span_to_test import (
     SpanToTestContractError,
     evaluate_expected_assertion,
     generate_span_to_test,
+    load_replay_fixture,
     preflight_output_paths,
     render_pytest_skeleton,
     validate_replay_fixture,
@@ -115,6 +118,47 @@ def test_topology_order_status_error_and_assertion_are_preserved() -> None:
     assert evaluate_expected_assertion(fixture)
 
 
+@pytest.mark.parametrize("selected_id", ["root-llm", "healthy-middle"])
+def test_healthy_ancestor_targets_failing_descendant_with_minimum_ancestry(
+    selected_id: str,
+) -> None:
+    source = _source()
+    source["steps"].insert(
+        2,
+        {
+            "step_id": "healthy-middle",
+            "parent_step_id": "root-llm",
+            "caused_by": None,
+            "kind": "agent",
+            "status": "ok",
+            "attributes": {"agent.type": "worker"},
+        },
+    )
+    failing = next(step for step in source["steps"] if step["step_id"] == "failing-tool")
+    failing["parent_step_id"] = "healthy-middle"
+
+    fixture, _receipt = generate_span_to_test(source, _request("span", selected_id))
+
+    spans_by_kind = {span["kind"]: span for span in fixture["spans"]}
+    assert [span["kind"] for span in fixture["spans"]] == [
+        "llm",
+        "agent",
+        "tool_call",
+        "hook",
+        "decision",
+    ]
+    assert fixture["source"]["selected_span_id"] == next(
+        span["span_id"]
+        for span in fixture["spans"]
+        if span["kind"] == ("llm" if selected_id == "root-llm" else "agent")
+    )
+    assert fixture["expected_assertion"]["target_span_id"] == spans_by_kind["tool_call"]["span_id"]
+    assert fixture["expected_assertion"]["kind"] == "span_status"
+    assert evaluate_expected_assertion(fixture)
+    assert "UnrelatedRead" not in _serialized(fixture)
+    assert "UnrelatedWrite" not in _serialized(fixture)
+
+
 def test_tool_payload_is_replaced_by_inert_descriptor() -> None:
     fixture, _receipt = _generated()
     failing = next(span for span in fixture["spans"] if span["kind"] == "tool_call")
@@ -131,6 +175,63 @@ def test_tool_payload_is_replaced_by_inert_descriptor() -> None:
         "unicode",
     ]
     assert descriptor["result_kind"] == "shell"
+
+
+def test_argument_key_normalization_is_collision_safe_deterministic_and_traceable() -> None:
+    source = _source()
+    arguments = {
+        "a": 1,
+        " a ": 2,
+        "e\u0301!": 3,
+        "é!": 4,
+        "K": 5,
+        "\N{KELVIN SIGN}": 6,
+        "Key": 7,
+        "key": 8,
+        "!": 9,
+        " ! ": 10,
+    }
+    failing = next(step for step in source["steps"] if step["step_id"] == "failing-tool")
+    failing["attributes"]["tool.arguments"] = arguments
+
+    first_fixture, first_receipt = generate_span_to_test(source, _request())
+    reversed_source = deepcopy(source)
+    reversed_failing = next(
+        step for step in reversed_source["steps"] if step["step_id"] == "failing-tool"
+    )
+    reversed_failing["attributes"]["tool.arguments"] = dict(reversed(list(arguments.items())))
+    second_fixture, second_receipt = generate_span_to_test(reversed_source, _request())
+
+    descriptor = next(span for span in first_fixture["spans"] if span["kind"] == "tool_call")[
+        "attributes"
+    ]["tool"]
+    normalized_keys = descriptor["argument_keys"]
+    assert len(normalized_keys) == len(arguments)
+    assert len(set(normalized_keys)) == len(normalized_keys)
+    assert len(
+        {unicodedata.normalize("NFKC", key).strip().casefold() for key in normalized_keys}
+    ) == len(normalized_keys)
+    assert all(key.startswith("arg_") for key in normalized_keys)
+    assert normalized_keys == sorted(normalized_keys)
+    assert first_fixture == second_fixture
+    assert first_receipt == second_receipt
+    Draft202012Validator(
+        json.loads((SCHEMA_DIR / "sanitized-replay-fixture.schema.json").read_text())
+    ).validate(first_fixture)
+
+    empty_source = _source()
+    empty_failing = next(
+        step for step in empty_source["steps"] if step["step_id"] == "failing-tool"
+    )
+    empty_failing["attributes"]["tool.arguments"] = {}
+    _empty_fixture, empty_receipt = generate_span_to_test(empty_source, _request())
+    identifier_count = sum(
+        item["category"] == "identifier" for item in first_receipt["transformations"]
+    )
+    empty_identifier_count = sum(
+        item["category"] == "identifier" for item in empty_receipt["transformations"]
+    )
+    assert identifier_count - empty_identifier_count == len(arguments)
 
 
 def test_no_raw_secrets_and_each_sensitive_class_is_receipted() -> None:
@@ -205,6 +306,69 @@ def test_denied_hook_asserts_verdict_not_ok_status() -> None:
     assert evaluate_expected_assertion(fixture)
 
 
+def test_target_only_hook_retains_target_and_target_dependencies_deterministically() -> None:
+    source = _source()
+    source["steps"].insert(
+        2,
+        {
+            "step_id": "target-prerequisite",
+            "parent_step_id": "root-llm",
+            "caused_by": None,
+            "kind": "decision",
+            "status": "ok",
+            "attributes": {"agent.decision.kind": "route"},
+        },
+    )
+    failing = next(step for step in source["steps"] if step["step_id"] == "failing-tool")
+    failing["caused_by"] = "target-prerequisite"
+    hook = next(step for step in source["steps"] if step["step_id"] == "denial-hook")
+    hook["caused_by"] = None
+
+    first = generate_span_to_test(source, _request("span", "denial-hook"))
+    second = generate_span_to_test(source, _request("span", "denial-hook"))
+    fixture, _receipt = first
+
+    assert first == second
+    span_ids = {span["span_id"] for span in fixture["spans"]}
+    reduced_hook = next(span for span in fixture["spans"] if span["kind"] == "hook")
+    target_id = reduced_hook["attributes"]["harness.hook.target_span_id"]
+    target = next(span for span in fixture["spans"] if span["span_id"] == target_id)
+    assert target["kind"] == "tool_call"
+    assert target["caused_by_span_id"] in span_ids
+    assert [span["sequence"] for span in fixture["spans"]] == sorted(
+        span["sequence"] for span in fixture["spans"]
+    )
+    assert evaluate_expected_assertion(fixture)
+
+
+def test_fixture_validator_rejects_missing_hook_target_reference() -> None:
+    source = _source()
+    hook = next(step for step in source["steps"] if step["step_id"] == "denial-hook")
+    hook["caused_by"] = None
+    fixture, _receipt = generate_span_to_test(source, _request("span", "denial-hook"))
+    reduced_hook = next(span for span in fixture["spans"] if span["kind"] == "hook")
+    target_id = reduced_hook["attributes"]["harness.hook.target_span_id"]
+    fixture["spans"] = [span for span in fixture["spans"] if span["span_id"] != target_id]
+
+    with pytest.raises(SpanToTestContractError, match="missing hook target_span_id"):
+        validate_replay_fixture(fixture)
+
+
+def test_hook_targeting_child_span_does_not_create_false_dependency_cycle() -> None:
+    source = _source()
+    failing = next(step for step in source["steps"] if step["step_id"] == "failing-tool")
+    failing["parent_step_id"] = "denial-hook"
+    hook = next(step for step in source["steps"] if step["step_id"] == "denial-hook")
+    hook["caused_by"] = None
+
+    fixture, _receipt = generate_span_to_test(source, _request("span", "denial-hook"))
+
+    assert evaluate_expected_assertion(fixture)
+    span_ids = {span["span_id"] for span in fixture["spans"]}
+    reduced_hook = next(span for span in fixture["spans"] if span["kind"] == "hook")
+    assert reduced_hook["attributes"]["harness.hook.target_span_id"] in span_ids
+
+
 def test_error_class_failure_assertion() -> None:
     source = _source()
     selected = source["steps"][2]
@@ -219,6 +383,16 @@ def test_error_class_failure_assertion() -> None:
 def test_span_without_failure_signal_is_rejected() -> None:
     source = _source()
     source["run"]["outcome"] = {"status": "completed"}
+    with pytest.raises(SpanToTestContractError, match="no supported failure signal"):
+        generate_span_to_test(source, _request("span", "irrelevant-before"))
+
+
+def test_healthy_span_with_only_causal_failure_evidence_is_rejected() -> None:
+    source = _source()
+    hook = next(step for step in source["steps"] if step["step_id"] == "denial-hook")
+    hook["caused_by"] = None
+    hook["attributes"]["harness.hook.target_step_id"] = "irrelevant-before"
+
     with pytest.raises(SpanToTestContractError, match="no supported failure signal"):
         generate_span_to_test(source, _request("span", "irrelevant-before"))
 
@@ -273,6 +447,73 @@ def test_fixture_validator_rejects_missing_topology_reference() -> None:
     fixture["spans"][1]["parent_span_id"] = "span_00000000000000000000"
     with pytest.raises(SpanToTestContractError, match="missing parent_span_id"):
         validate_replay_fixture(fixture)
+
+
+@pytest.mark.parametrize(
+    ("argument_key", "message"),
+    [("command", "must be unique"), ("Command", "normalization collision")],
+)
+def test_fixture_validator_rejects_colliding_argument_keys(argument_key: str, message: str) -> None:
+    fixture, _receipt = _generated()
+    descriptor = next(span for span in fixture["spans"] if span["kind"] == "tool_call")[
+        "attributes"
+    ]["tool"]
+    descriptor["argument_keys"].append(argument_key)
+
+    with pytest.raises(SpanToTestContractError, match=message):
+        validate_replay_fixture(fixture)
+
+
+@pytest.mark.parametrize("field", ["kind", "target_span_id", "operator", "expected"])
+def test_fixture_validator_rejects_incomplete_assertion(field: str) -> None:
+    fixture, _receipt = _generated()
+    fixture["expected_assertion"].pop(field)
+
+    with pytest.raises(SpanToTestContractError, match="must contain exactly"):
+        validate_replay_fixture(fixture)
+    with pytest.raises(SpanToTestContractError, match="must contain exactly"):
+        evaluate_expected_assertion(fixture)
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("kind", "unknown", "kind must be one of"),
+        ("target_span_id", "raw-target", "target_span_id must be an opaque ID"),
+        ("operator", "contains", "operator must be equals"),
+        ("expected", "", "expected must be a non-empty string"),
+        ("expected", "x" * 129, "expected must be a non-empty string"),
+        ("expected", "not allowed!", "expected must be bounded structural text"),
+    ],
+)
+def test_fixture_validator_rejects_malformed_assertion_fields(
+    field: str, value: object, message: str
+) -> None:
+    fixture, _receipt = _generated()
+    fixture["expected_assertion"][field] = value
+
+    with pytest.raises(SpanToTestContractError, match=message):
+        validate_replay_fixture(fixture)
+
+
+def test_fixture_validator_rejects_assertion_extensions() -> None:
+    fixture, _receipt = _generated()
+    fixture["expected_assertion"]["extra"] = "value"
+
+    with pytest.raises(SpanToTestContractError, match="must contain exactly"):
+        validate_replay_fixture(fixture)
+
+
+def test_load_replay_fixture_returns_bounded_error_for_incomplete_assertion(tmp_path) -> None:
+    fixture, _receipt = _generated()
+    fixture["expected_assertion"].pop("kind")
+    fixture_path = tmp_path / "incomplete-fixture.json"
+    fixture_path.write_text(json.dumps(fixture), encoding="utf-8")
+
+    with pytest.raises(SpanToTestContractError) as error:
+        load_replay_fixture(fixture_path)
+    assert "fixture.expected_assertion" in str(error.value)
+    assert len(str(error.value)) <= 160
 
 
 def test_machine_schemas_validate_request_fixture_and_receipt() -> None:
@@ -362,6 +603,30 @@ def test_cli_writes_only_explicit_outputs_and_preserves_source(tmp_path, capsys)
     skeleton = test_path.read_text(encoding="utf-8")
     assert "evaluate_expected_assertion" in skeleton
     assert not any(sentinel in skeleton for sentinel in SENTINELS)
+
+
+def test_generated_fixture_for_healthy_ancestor_executes(tmp_path, capsys) -> None:
+    fixture_path = tmp_path / "fixture.json"
+    test_path = tmp_path / "test_fixture.py"
+    assert (
+        main(
+            [
+                "span-to-test",
+                str(SOURCE_PATH),
+                "--span",
+                "root-llm",
+                "-o",
+                str(fixture_path),
+                "--pytest-output",
+                str(test_path),
+            ]
+        )
+        == 0
+    )
+    assert json.loads(capsys.readouterr().out)["schema_version"] == RECEIPT_VERSION
+
+    generated = runpy.run_path(str(test_path))
+    generated["test_sanitized_replay_preserves_failure_signal"]()
 
 
 def test_cli_refuses_accidental_overwrite(tmp_path, capsys) -> None:

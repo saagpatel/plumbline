@@ -32,6 +32,17 @@ _CONTROL_CHARACTER_LIMIT = 32
 _FAILURE_STATUSES = frozenset({"error", "interrupted"})
 _FAILURE_OUTCOMES = frozenset({"failed", "aborted"})
 _FINDING_KEYS = frozenset({"finding.id", "finding_id", "plumbline.finding.id"})
+_ASSERTION_KINDS = frozenset(
+    {
+        "span_failure",
+        "span_status",
+        "hook_verdict",
+        "error_class",
+        "finding",
+        "run_outcome",
+    }
+)
+_ASSERTION_FIELDS = frozenset({"kind", "target_span_id", "operator", "expected"})
 _SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:/@+-]{0,127}$")
 _OPAQUE_ID = re.compile(r"^[a-z]+_[0-9a-f]{20}$")
 _EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
@@ -100,6 +111,11 @@ def _safe_name(value: Any, fallback: str) -> str:  # noqa: ANN401
     if _SAFE_NAME.fullmatch(normalized) and not _sensitive_text_category(normalized):
         return normalized
     return _pseudonym(fallback, normalized)
+
+
+def _argument_key_identity(value: str) -> str:
+    """Return the comparison identity used to avoid portable key collisions."""
+    return unicodedata.normalize("NFKC", value).strip().casefold()
 
 
 def _sensitive_text_category(value: str) -> str | None:
@@ -220,6 +236,43 @@ def _record_timestamp(
     )
 
 
+def _normalize_argument_keys(
+    arguments: Mapping[Any, Any],
+    transformations: list[dict[str, str]],
+    *,
+    source_step_id: str,
+) -> list[str]:
+    """Project argument keys to unique deterministic names without losing key receipts."""
+    source_keys = sorted(str(key) for key in arguments)
+    collision_counts: dict[str, int] = defaultdict(int)
+    for source_key in source_keys:
+        collision_counts[_argument_key_identity(source_key)] += 1
+
+    projected: list[str] = []
+    used_identities: set[str] = set()
+    for source_key in source_keys:
+        _record_identity(
+            transformations,
+            source_step_id=source_step_id,
+            path=(f"attributes/tool.arguments/@key/{_pseudonym('argkey', source_key)}"),
+        )
+        collision_identity = _argument_key_identity(source_key)
+        candidate = (
+            _pseudonym("arg", source_key)
+            if collision_counts[collision_identity] > 1
+            else _safe_name(source_key, "arg")
+        )
+        candidate_identity = _argument_key_identity(candidate)
+        disambiguator = 0
+        while candidate_identity in used_identities:
+            disambiguator += 1
+            candidate = _pseudonym("arg", f"{source_key}\0{disambiguator}")
+            candidate_identity = _argument_key_identity(candidate)
+        used_identities.add(candidate_identity)
+        projected.append(candidate)
+    return sorted(projected)
+
+
 def _normalize_bool(value: Any) -> bool | None:  # noqa: ANN401
     return value if isinstance(value, bool) else None
 
@@ -247,7 +300,11 @@ def _safe_attributes(
             consumed.add("tool.arguments")
             arguments = raw["tool.arguments"]
             if isinstance(arguments, Mapping):
-                argument_keys = sorted(_safe_name(str(key), "arg") for key in arguments)
+                argument_keys = _normalize_argument_keys(
+                    arguments,
+                    transformations,
+                    source_step_id=source_id,
+                )
             _record_removed(
                 transformations,
                 source_step_id=source_id,
@@ -442,27 +499,60 @@ def _failure_assertion(step: Mapping[str, Any]) -> tuple[str, str] | None:
     return None
 
 
+def _first_failing_descendant(
+    steps: list[Mapping[str, Any]], selected_id: str
+) -> tuple[Mapping[str, Any], str, str] | None:
+    children: dict[str, list[str]] = defaultdict(list)
+    for step in steps:
+        parent = step.get("parent_step_id")
+        if isinstance(parent, str):
+            children[parent].append(str(step["step_id"]))
+
+    descendants: set[str] = set()
+    stack = list(reversed(children.get(selected_id, [])))
+    while stack:
+        current = stack.pop()
+        if current in descendants:
+            continue
+        descendants.add(current)
+        stack.extend(reversed(children.get(current, [])))
+
+    for step in steps:
+        if step["step_id"] not in descendants:
+            continue
+        assertion = _failure_assertion(step)
+        if assertion is not None:
+            return step, *assertion
+    return None
+
+
 def _select_step(
     run: Mapping[str, Any], steps: list[Mapping[str, Any]], selector_kind: str, selector_value: str
-) -> tuple[Mapping[str, Any], str, str]:
+) -> tuple[Mapping[str, Any], Mapping[str, Any], str, str]:
     if selector_kind == "trace":
         if selector_value != run["run_id"]:
             raise SpanToTestContractError("trace selector does not match trace.run.run_id")
         for step in steps:
             assertion = _failure_assertion(step)
             if assertion is not None:
-                return step, *assertion
+                return step, step, *assertion
         outcome = _mapping(run.get("outcome") or {}, "trace.run.outcome")
         if outcome.get("status") in _FAILURE_OUTCOMES:
-            return steps[-1], "run_outcome", str(outcome["status"])
+            return steps[-1], steps[-1], "run_outcome", str(outcome["status"])
         raise SpanToTestContractError("selected trace has no supported failure signal")
     if selector_kind == "span":
         for step in steps:
             if step["step_id"] == selector_value:
                 assertion = _failure_assertion(step)
                 if assertion is None:
-                    return step, "span_failure", "failure"
-                return step, *assertion
+                    descendant = _first_failing_descendant(steps, str(step["step_id"]))
+                    if descendant is None:
+                        raise SpanToTestContractError(
+                            "selected span subtree has no supported failure signal"
+                        )
+                    target, assertion_kind, expected = descendant
+                    return step, target, assertion_kind, expected
+                return step, step, *assertion
         raise SpanToTestContractError("span selector did not match a step")
     if selector_kind == "finding":
         for step in steps:
@@ -470,15 +560,15 @@ def _select_step(
             if isinstance(attributes, Mapping) and any(
                 attributes.get(key) == selector_value for key in _FINDING_KEYS
             ):
-                return step, "finding", "present"
+                return step, step, "finding", "present"
         raise SpanToTestContractError("finding selector did not match a step")
     outcome = _mapping(run.get("outcome") or {}, "trace.run.outcome")
     if outcome.get("status") == selector_value:
         selected = next((step for step in steps if _has_failure(step)), steps[-1])
-        return selected, "run_outcome", selector_value
+        return selected, selected, "run_outcome", selector_value
     for step in steps:
         if step.get("status") == selector_value:
-            return step, "span_status", selector_value
+            return step, step, "span_status", selector_value
     raise SpanToTestContractError("outcome selector did not match run outcome or span status")
 
 
@@ -519,6 +609,12 @@ def _closure(steps: list[Mapping[str, Any]], selected_id: str) -> set[str]:
                 if isinstance(reference, str) and reference not in included:
                     included.add(reference)
                     changed = True
+            attributes = step.get("attributes") or {}
+            if isinstance(attributes, Mapping):
+                hook_target = attributes.get("harness.hook.target_step_id")
+                if isinstance(hook_target, str) and hook_target not in included:
+                    included.add(hook_target)
+                    changed = True
             for dependent in caused_dependents.get(step_id, []):
                 dependent_step = by_id[dependent]
                 is_control_evidence = dependent_step.get("kind") in {"hook", "decision"}
@@ -545,9 +641,12 @@ def generate_span_to_test(
     source = deepcopy(trace)
     selector_kind, selector_value = _validate_request(request)
     run, steps = _validate_trace(source)
-    selected, assertion_kind, expected = _select_step(run, steps, selector_kind, selector_value)
+    selected, assertion_target, assertion_kind, expected = _select_step(
+        run, steps, selector_kind, selector_value
+    )
     selected_id = str(selected["step_id"])
-    included_ids = _closure(steps, selected_id)
+    assertion_target_id = str(assertion_target["step_id"])
+    included_ids = _closure(steps, assertion_target_id)
     selected_subtree_has_failure = any(
         _has_failure(step) for step in steps if step["step_id"] in included_ids
     )
@@ -648,7 +747,7 @@ def generate_span_to_test(
         "spans": reduced_spans,
         "expected_assertion": {
             "kind": assertion_kind,
-            "target_span_id": _pseudonym("span", selected_id),
+            "target_span_id": _pseudonym("span", assertion_target_id),
             "operator": "equals",
             "expected": _safe_name(expected, "expected"),
         },
@@ -701,13 +800,6 @@ def validate_replay_fixture(fixture: Mapping[str, Any]) -> None:
         raise SpanToTestContractError("fixture must declare inert_data_only artifact mode")
     if safety.get("contains_executable_payloads") is not False:
         raise SpanToTestContractError("fixture must exclude executable payloads")
-    for path, value in _leaf_values(fixture):
-        if isinstance(value, str) and not _OPAQUE_ID.fullmatch(value):
-            category = _sensitive_text_category(value)
-            if category is not None:
-                raise SpanToTestContractError(
-                    f"fixture contains unsafe structural text at {path}: {category}"
-                )
     spans = _list(fixture.get("spans"), "fixture.spans")
     if not spans:
         raise SpanToTestContractError("fixture.spans must not be empty")
@@ -741,9 +833,85 @@ def validate_replay_fixture(fixture: Mapping[str, Any]) -> None:
             reference = span.get(relation)
             if reference is not None and reference not in ids:
                 raise SpanToTestContractError(f"fixture has missing {relation}: {reference}")
+        attributes = _mapping(span.get("attributes"), "fixture.spans[].attributes")
+        raw_tool = attributes.get("tool")
+        if raw_tool is not None:
+            tool = _mapping(raw_tool, "fixture.spans[].attributes.tool")
+            argument_keys = _list(
+                tool.get("argument_keys"),
+                "fixture.spans[].attributes.tool.argument_keys",
+            )
+            validated_keys = [
+                _text(
+                    key,
+                    f"fixture.spans[].attributes.tool.argument_keys[{index}]",
+                    maximum=_MAX_SAFE_TEXT_LENGTH,
+                )
+                for index, key in enumerate(argument_keys)
+            ]
+            if len(set(validated_keys)) != len(validated_keys):
+                raise SpanToTestContractError("fixture tool argument_keys must be unique")
+            normalized_identities = {_argument_key_identity(key) for key in validated_keys}
+            if len(normalized_identities) != len(validated_keys):
+                raise SpanToTestContractError(
+                    "fixture tool argument_keys contain a normalization collision"
+                )
+            if any(not _SAFE_NAME.fullmatch(key) for key in validated_keys):
+                raise SpanToTestContractError(
+                    "fixture tool argument_keys must be bounded structural text"
+                )
+        hook_target = attributes.get("harness.hook.target_span_id")
+        if hook_target is not None:
+            target_id = _text(
+                hook_target,
+                "fixture.spans[].attributes.harness.hook.target_span_id",
+            )
+            if not _OPAQUE_ID.fullmatch(target_id):
+                raise SpanToTestContractError("fixture hook target_span_id must be an opaque ID")
+            if target_id not in ids:
+                raise SpanToTestContractError(
+                    f"fixture has missing hook target_span_id: {target_id}"
+                )
     assertion = _mapping(fixture.get("expected_assertion"), "fixture.expected_assertion")
-    if assertion.get("target_span_id") not in ids:
+    if set(assertion) != _ASSERTION_FIELDS:
+        raise SpanToTestContractError(
+            "fixture.expected_assertion must contain exactly kind, target_span_id, "
+            "operator, and expected"
+        )
+    assertion_kind = _text(assertion.get("kind"), "fixture.expected_assertion.kind")
+    if assertion_kind not in _ASSERTION_KINDS:
+        raise SpanToTestContractError(
+            "fixture.expected_assertion.kind must be one of span_failure, span_status, "
+            "hook_verdict, error_class, finding, or run_outcome"
+        )
+    assertion_target = _text(
+        assertion.get("target_span_id"),
+        "fixture.expected_assertion.target_span_id",
+    )
+    if not _OPAQUE_ID.fullmatch(assertion_target):
+        raise SpanToTestContractError(
+            "fixture.expected_assertion.target_span_id must be an opaque ID"
+        )
+    if assertion_target not in ids:
         raise SpanToTestContractError("fixture assertion target is missing")
+    if assertion.get("operator") != "equals":
+        raise SpanToTestContractError("fixture.expected_assertion.operator must be equals")
+    expected = _text(
+        assertion.get("expected"),
+        "fixture.expected_assertion.expected",
+        maximum=_MAX_SAFE_TEXT_LENGTH,
+    )
+    if not _SAFE_NAME.fullmatch(expected):
+        raise SpanToTestContractError(
+            "fixture.expected_assertion.expected must be bounded structural text"
+        )
+    for path, value in _leaf_values(fixture):
+        if isinstance(value, str) and not _OPAQUE_ID.fullmatch(value):
+            category = _sensitive_text_category(value)
+            if category is not None:
+                raise SpanToTestContractError(
+                    f"fixture contains unsafe structural text at {path}: {category}"
+                )
 
 
 def evaluate_expected_assertion(fixture: Mapping[str, Any]) -> bool:

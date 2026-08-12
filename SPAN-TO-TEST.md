@@ -36,7 +36,10 @@ Controls:
   tool values/results, unknown attributes, and run workspace/model data are
   removed. Each removed leaf gets a pseudonymous transformation entry.
 - Tool calls become inert descriptors containing only operation, tool name,
-  argument-key shape, and result kind. A fixture cannot carry an argument value.
+  argument-key shape, and result kind. Distinct keys that collide after Unicode,
+  punctuation, whitespace, or case normalization receive deterministic
+  pseudonyms, and every source key receives a pseudonymous receipt entry. A
+  fixture cannot carry an argument value.
 - URLs, email addresses, home/environment paths, token shapes, binary-looking
   data, control bytes, and oversized strings are classified in the receipt and
   excluded from the fixture.
@@ -45,6 +48,10 @@ Controls:
 - Missing parents, missing causal targets, duplicate IDs, dependency cycles,
   absent failure signals, oversized source files, symlink inputs, and malformed
   JSON fail closed.
+- Hook target references must resolve inside the retained fixture. Loaded
+  fixtures require the exact assertion field set and reject unsupported kinds,
+  operators, malformed targets, unbounded expected values, and normalized
+  argument-key collisions with `SpanToTestContractError`.
 - Every file write needs an explicit path. Existing files are refused unless
   `--force` is supplied; final-component symlinks are always refused; output
   parents are never created implicitly; source/output symlink and hardlink
@@ -68,8 +75,12 @@ it is not an independent privacy review.
    - `finding`: exact `finding.id`, `finding_id`, or
      `plumbline.finding.id` attribute;
    - `outcome`: exact run outcome or span status.
-3. Start with the selected span's parent-child subtree.
-4. Add its complete parent ancestry, `caused_by` dependencies, hook target
+3. Resolve the assertion target. A failing selected span targets itself. For a
+   healthy span whose subtree contains a failure, the first failure-bearing
+   descendant in source order becomes the target while the selected span ID is
+   retained for traceability.
+4. Start from the assertion target, then add its complete parent ancestry,
+   `caused_by` dependencies, execution-critical hook targets and their
    dependencies, and causally dependent failure-evidence spans. Do not add
    unrelated siblings merely because a retained ancestor is their parent.
 5. Preserve source ordering as `sequence`; pseudonymize topology joins.

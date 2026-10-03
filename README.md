@@ -194,8 +194,9 @@ meta-decisions, which the judge needs. Dogfooding the full pipeline against a re
 judge returning a confident-but-vacuous "approve" on recorded data with no plan, outcome, or decisions to
 reason over. Phase 4 closes that gap so the loop is **record → enrich → score → judge** on real traces:
 
-- **Outcome + plan capture (4a, recorder).** The plan (first user turn) and the outcome (final assistant
-  turn: status + a scrubbed summary, the agent's *claim*) are observable and now captured. A real bug was
+- **Outcome + plan capture (4a, recorder).** The plan (first main-agent user turn containing text) and
+  the outcome (latest available main-agent assistant stop reason + a scrubbed summary from its latest
+  text, the agent's *claim*) are observable and now captured. A real bug was
   fixed here: string-valued `message.content` was silently dropped.
 - **Structural decision inference (4b, scorer).** `enrich(trace)` infers `reroute` decisions from
   structure: a denied tool re-attempted as the *same tool on a different resource* (vs a bypass), or a
@@ -293,8 +294,9 @@ uv run plumbline record path/to/<session>.jsonl -o run.plumbline.json --validate
 Subagent sidechains at `<session>/subagents/agent-*.jsonl` are merged automatically and
 tagged by their `agentId`; the result validates against the Phase 0 schema. Pass `--no-scrub`
 for local-only inspection. The recorder captures the *observable* execution layer (llm turns,
-tool calls, subagent dispatch, hook verdicts, mode changes, compaction) — `decision`-kind
-steps are a Phase 2 scoring concern, inferred from this path, not recorded here.
+tool calls, subagent dispatch, hook verdicts, mode changes, compaction). `decision`-kind
+steps are omitted by default; `--infer-text-decisions` records inferred refuse/escalate
+decisions, while the scorer infers structural reroutes from this path.
 
 ## Design stance
 

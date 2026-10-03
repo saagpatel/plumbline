@@ -15,7 +15,7 @@ Portfolio truth currently marks this project as `active` with `boilerplate` cont
 
 ## How To Run
 
-- Review the README and top-level scripts before the next session; this repo does not yet expose one canonical run command inside the new context block.
+- Follow [README development and verification](README.md#development-and-verification) for the locked environment, fixture checks, and opt-in provider lanes.
 
 ## Known Risks
 

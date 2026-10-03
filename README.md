@@ -302,6 +302,34 @@ Reuse the standard layer (`gen_ai.*` + OTLP transport) for backend portability; 
 (`agent.decision.*`, `harness.*`) that differentiates a coding-agent harness. Harness-agnostic schema,
 harness-specific recorders. No PII in any published trace.
 
+## Development and verification
+
+Use Python 3.11+ and uv from the repository root. Install the committed lockfile's
+development groups into an isolated checkout/environment:
+
+```sh
+uv sync --frozen --group dev
+uv run --frozen pytest tests/test_cli_score.py --no-cov
+```
+
+The focused CLI tests use temporary/synthetic traces and fake judge responses;
+`--no-cov` is only for this focused run. The broader gate is `uv run --frozen pytest`,
+which retains the configured 80% coverage threshold. Lint/format checks are
+`uv run --frozen ruff check .` and `uv run --frozen ruff format --check .`.
+Use `uv run --frozen ty check` for full typing (including tests), or
+`uv run --frozen ty check src/plumbline` for a focused source check; report those
+scopes separately. The build backend is `uv_build`; `uv build` builds the wheel
+and source distribution when packaging changes need validation.
+
+For an offline CLI smoke, inspect `uv run --frozen plumbline --help`, or score a
+synthetic trace/case as described above. Dependency installation/schema-tool
+bootstrapping can download packages; deterministic scoring itself is offline.
+Do not record real `~/.claude` transcripts, enable `--judge`, contact Ollama or
+Anthropic, or reconcile live WorkGraph data merely to verify a documentation
+change. Judge/provider validation is opt-in and described in [JUDGE.md](JUDGE.md).
+There is no browser UI to check; inspect generated report/CLI output when its
+behavior changes.
+
 ## License
 
 MIT — see [`LICENSE`](LICENSE).

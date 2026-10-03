@@ -3,7 +3,7 @@
 
 ## What This Project Is
 
-plumbline: An open, OpenTelemetry-compatible agent-trace schema with a first-class decision-path overlay and an.
+plumbline: An open, OpenTelemetry-compatible agent-trace schema with a first-class decision-path overlay and an offline scorer that grades a trace your harness already produced.
 
 ## Current State
 

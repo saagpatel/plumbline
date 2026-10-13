@@ -93,6 +93,21 @@ def test_plan_without_execution_and_disconnected_outcome_are_detected() -> None:
     )
 
 
+def test_plan_step_id_is_not_execution_evidence() -> None:
+    trace = {
+        "plumbline_version": "0.1.0",
+        "capture_scope": {"plans": "complete"},
+        "run": {
+            "run_id": "synthetic-plan-only",
+            "started_at": "2026-01-01T00:00:00Z",
+            "plan": {"items": [{"id": "pending", "status": "pending"}]},
+        },
+        "steps": [],
+    }
+    report = analyze_span_gaps(trace)
+    assert "PLAN_STEP_WITHOUT_EXECUTION" in codes(report)
+
+
 def test_workflow_subtree_escape_is_detected() -> None:
     trace = {
         "capture_scope": {"spans": "complete"},

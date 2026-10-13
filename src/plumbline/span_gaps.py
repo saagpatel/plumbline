@@ -848,7 +848,10 @@ def _detect_plans_and_outcomes(
 ) -> list[FindingDraft]:
     findings: list[FindingDraft] = []
     plan_refs = {
-        _attribute(node, _PLAN_REF_KEYS) for node in nodes if _attribute(node, _PLAN_REF_KEYS)
+        reference
+        for node in nodes
+        if _EXECUTION_ROLES.intersection(node.roles)
+        if (reference := _attribute(node, _PLAN_REF_KEYS))
     }
     for node in nodes:
         if "plan" not in node.roles:

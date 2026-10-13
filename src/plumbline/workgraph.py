@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import heapq
 import json
+import math
 import re
 from collections import defaultdict
 from datetime import UTC, datetime
@@ -77,8 +78,7 @@ def _metadata_ref(value: Any, path: str) -> str:
 
 def _metadata_id_array(value: Any, path: str) -> list[str]:
     result = [
-        _metadata_id(item, f"{path}[{index}]")
-        for index, item in enumerate(_array(value, path))
+        _metadata_id(item, f"{path}[{index}]") for index, item in enumerate(_array(value, path))
     ]
     if len(result) != len(set(result)):
         raise WorkGraphContractError(f"{path} must not contain duplicates")
@@ -87,8 +87,7 @@ def _metadata_id_array(value: Any, path: str) -> list[str]:
 
 def _metadata_ref_array(value: Any, path: str) -> list[str]:
     result = [
-        _metadata_ref(item, f"{path}[{index}]")
-        for index, item in enumerate(_array(value, path))
+        _metadata_ref(item, f"{path}[{index}]") for index, item in enumerate(_array(value, path))
     ]
     if len(result) != len(set(result)):
         raise WorkGraphContractError(f"{path} must not contain duplicates")
@@ -115,7 +114,12 @@ def _integer(value: Any, path: str) -> int:
 def _number_or_none(value: Any, path: str) -> float | None:
     if value is None:
         return None
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(value)
+        or value < 0
+    ):
         raise WorkGraphContractError(f"{path} must be null or a non-negative number")
     return float(value)
 

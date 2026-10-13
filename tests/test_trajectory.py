@@ -46,18 +46,28 @@ def test_example_is_valid() -> None:
     assert validate_outcome_bound_trajectory(example())["trajectory_id"] == "obt-synthetic-001"
 
 
+def test_non_finite_confidence_is_rejected() -> None:
+    document = example()
+    document["outcomes"][0]["confidence"] = float("nan")
+    with pytest.raises(TrajectoryContractError, match="confidence"):
+        validate_outcome_bound_trajectory(document)
+
+
+def test_non_finite_aggregate_coverage_is_rejected() -> None:
+    aggregate = aggregate_outcome_bound_trajectories([example()])
+    aggregate["capabilities"][0]["independent_label_coverage"] = float("nan")
+    with pytest.raises(TrajectoryContractError, match="coverage"):
+        query_capability_decision(aggregate, "quality-gatekeeper")
+
+
 def test_file_loader_resolves_exact_privacy_review_receipt() -> None:
     path = Path(__file__).parents[1] / "examples" / "outcome-bound-trajectory.json"
     assert load_outcome_bound_trajectory(path)["trajectory_id"] == "obt-synthetic-001"
 
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
-        (root / "outcome-bound-trajectory.json").write_text(
-            json.dumps(example()), encoding="utf-8"
-        )
-        (root / "outcome-privacy-review-receipt.json").write_text(
-            "tampered", encoding="utf-8"
-        )
+        (root / "outcome-bound-trajectory.json").write_text(json.dumps(example()), encoding="utf-8")
+        (root / "outcome-privacy-review-receipt.json").write_text("tampered", encoding="utf-8")
         with pytest.raises(TrajectoryContractError, match="privacy receipt digest mismatch"):
             load_outcome_bound_trajectory(root / "outcome-bound-trajectory.json")
 
@@ -117,6 +127,7 @@ def test_privacy_profile_requires_digest_bound_verification() -> None:
     del document["privacy"]["verification"]
     with pytest.raises(TrajectoryContractError, match="missing key"):
         validate_outcome_bound_trajectory(document)
+
 
 def test_causal_claim_requires_independent_outcome_and_design() -> None:
     document = with_id(example(), 1, exposed=True, passed=None)

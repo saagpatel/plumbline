@@ -139,6 +139,13 @@ def test_complete_shadow_is_go_with_recomputed_metrics() -> None:
     }
 
 
+def test_non_finite_cost_is_rejected() -> None:
+    events = observed()
+    events["events"][0]["cost_usd"] = float("nan")
+    with pytest.raises(WorkGraphContractError, match="cost_usd"):
+        evaluate(events)
+
+
 def test_missing_terminal_is_unknown_not_green() -> None:
     events = observed()
     events["events"] = events["events"][:-1]

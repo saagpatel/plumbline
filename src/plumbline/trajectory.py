@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 from collections import defaultdict
 from datetime import UTC, datetime
@@ -36,7 +37,9 @@ class TrajectoryContractError(ValueError):
 
 def canonical_json_bytes(value: Any) -> bytes:
     """Return deterministic UTF-8 JSON bytes."""
-    return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode()
+    return json.dumps(
+        value, ensure_ascii=False, separators=(",", ":"), sort_keys=True, allow_nan=False
+    ).encode()
 
 
 def sha256_value(value: Any) -> str:
@@ -114,7 +117,7 @@ def _number(value: Any, path: str, *, minimum: float = 0.0, maximum: float | Non
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise TrajectoryContractError(f"{path} must be a number")
     result = float(value)
-    if result < minimum or (maximum is not None and result > maximum):
+    if not math.isfinite(result) or result < minimum or (maximum is not None and result > maximum):
         suffix = f" and <= {maximum}" if maximum is not None else ""
         raise TrajectoryContractError(f"{path} must be >= {minimum}{suffix}")
     return result
@@ -152,8 +155,7 @@ def _text_array(value: Any, path: str, *, allow_empty: bool = True) -> list[str]
 
 def _reference_array(value: Any, path: str, *, allow_empty: bool = True) -> list[str]:
     result = [
-        _metadata_ref(item, f"{path}[{index}]")
-        for index, item in enumerate(_array(value, path))
+        _metadata_ref(item, f"{path}[{index}]") for index, item in enumerate(_array(value, path))
     ]
     if not allow_empty and not result:
         raise TrajectoryContractError(f"{path} must not be empty")
@@ -265,9 +267,7 @@ def validate_outcome_bound_trajectory(document: Any) -> dict[str, Any]:
     if not capabilities:
         raise TrajectoryContractError("trajectory.capabilities must not be empty")
     capability_keys: set[tuple[str, str]] = set()
-    capability_outcome_refs: dict[str, dict[str, set[str]]] = defaultdict(
-        lambda: defaultdict(set)
-    )
+    capability_outcome_refs: dict[str, dict[str, set[str]]] = defaultdict(lambda: defaultdict(set))
     for index, raw_capability in enumerate(capabilities):
         path = f"trajectory.capabilities[{index}]"
         capability = _object(raw_capability, path)
@@ -335,8 +335,7 @@ def validate_outcome_bound_trajectory(document: Any) -> dict[str, Any]:
         terminal_labels = {
             "passed" if outcome_by_id[ref]["status"] == "passed" else "failed"
             for ref in refs
-            if outcome_by_id[ref]["independent"]
-            and outcome_by_id[ref]["status"] != "unknown"
+            if outcome_by_id[ref]["independent"] and outcome_by_id[ref]["status"] != "unknown"
         }
         if len(terminal_labels) > 1:
             raise TrajectoryContractError(
@@ -533,9 +532,7 @@ def aggregate_outcome_bound_trajectories(documents: list[Any]) -> dict[str, Any]
         trajectory_ids.add(trajectory_id)
         outcomes = {outcome["outcome_id"]: outcome for outcome in document["outcomes"]}
         per_capability: dict[str, set[str]] = defaultdict(set)
-        per_capability_refs: dict[str, dict[str, set[str]]] = defaultdict(
-            lambda: defaultdict(set)
-        )
+        per_capability_refs: dict[str, dict[str, set[str]]] = defaultdict(lambda: defaultdict(set))
         for observation in document["capabilities"]:
             capability_id = observation["capability_id"]
             per_capability[capability_id].add(observation["state"])
@@ -653,7 +650,11 @@ def query_capability_decision(
     row = rows[0]
     exposed_n = row["passed_exposed_runs"] + row["failed_exposed_runs"]
     control_n = row["passed_available_only_runs"] + row["failed_available_only_runs"]
-    coverage = float(row.get("independent_label_coverage", 0.0))
+    coverage = _number(
+        row.get("independent_label_coverage", 0.0),
+        "aggregate.capabilities[].independent_label_coverage",
+        maximum=1.0,
+    )
     if coverage < minimum_label_coverage:
         decision = "STOP_LOW_LABEL_COVERAGE"
         reason = f"independent label coverage {coverage:.3f} is below {minimum_label_coverage:.3f}"

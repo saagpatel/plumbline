@@ -7,7 +7,7 @@ import pytest
 from jsonschema import Draft202012Validator
 
 from plumbline.cli import _validate, main
-from plumbline.recorders.claude_code import record_session
+from plumbline.recorders.claude_code import load_jsonl, record_session
 
 FIXTURE = Path(__file__).parent / "fixtures" / "cc_session" / "sess.jsonl"
 SCHEMA = Path(__file__).parents[1] / "schema" / "plumbline-trace.schema.json"
@@ -16,6 +16,13 @@ SCHEMA = Path(__file__).parents[1] / "schema" / "plumbline-trace.schema.json"
 @pytest.fixture(scope="module")
 def trace() -> dict:
     return record_session(FIXTURE)
+
+
+def test_malformed_jsonl_reports_file_and_line(tmp_path) -> None:
+    source = tmp_path / "broken.jsonl"
+    source.write_text('{"type":"user"}\n{broken}\n', encoding="utf-8")
+    with pytest.raises(ValueError, match=r"broken\.jsonl:2: malformed JSON"):
+        load_jsonl(source)
 
 
 def steps_of_kind(trace: dict, kind: str) -> list[dict]:

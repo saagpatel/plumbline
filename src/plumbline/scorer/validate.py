@@ -99,10 +99,14 @@ def load_corpus(directory: Path) -> list[LabeledCase]:
     cases: list[LabeledCase] = []
     for path in sorted(directory.glob("*.json")):
         data = json.loads(path.read_text(encoding="utf-8"))
+        gold = data["gold_meta_decision_ok"]
+        if not isinstance(gold, bool):
+            msg = f"{path}: 'gold_meta_decision_ok' must be a boolean"
+            raise ValueError(msg)  # noqa: TRY004
         cases.append(
             LabeledCase(
                 label_id=data["label_id"],
-                gold_meta_decision_ok=bool(data["gold_meta_decision_ok"]),
+                gold_meta_decision_ok=gold,
                 note=data.get("note", ""),
                 trace=Trace.from_dict(data["trace"]),
             )

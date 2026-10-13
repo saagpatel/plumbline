@@ -111,6 +111,12 @@ def _composite(
 def score(trace: Trace, case: Case, subagent_id: str | None = None) -> Scorecard:
     """Score a trace's realized path (default: main agent) against a case."""
     path = trace.path(subagent_id)
+    if not path:
+        msg = "trace contains no scoring actions"
+        raise ValueError(msg)
+    if not case.reference_path:
+        msg = "case reference_path contains no scoring actions"
+        raise ValueError(msg)
     pred, ref = names(path), [node.tool for node in case.reference_path]
     selection = node_f1(pred, ref)
     ordering = edge_f1(pred, ref)

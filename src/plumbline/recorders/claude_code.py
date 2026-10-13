@@ -9,8 +9,8 @@ verdicts, mode transitions and compaction boundaries. It does not synthesize
 `decision` steps: a meta-decision is a judgement the Phase 2 scorer infers from
 this observable path, not a fact the transcript records.
 
-Real transcripts vary in shape; the recorder is defensive about it (see
-`_as_dict` and the id fallbacks) so a single malformed event never aborts a run.
+Real transcripts vary in shape; the recorder is defensive about event fields,
+but malformed JSON lines are reported with their source location.
 """
 
 from __future__ import annotations
@@ -69,13 +69,17 @@ def _as_dict(value: Any) -> JsonObj:  # noqa: ANN401 - CC fields are sometimes s
 
 
 def load_jsonl(path: Path) -> list[JsonObj]:
-    """Parse a JSONL transcript into a list of events (streamed line by line)."""
+    """Parse a JSONL transcript, reporting malformed input with file and line."""
     events: list[JsonObj] = []
     with path.open(encoding="utf-8") as handle:
-        for raw in handle:
+        for line_number, raw in enumerate(handle, start=1):
             stripped = raw.strip()
             if stripped:
-                events.append(json.loads(stripped))
+                try:
+                    events.append(json.loads(stripped))
+                except json.JSONDecodeError as exc:
+                    msg = f"{path}:{line_number}: malformed JSON: {exc.msg}"
+                    raise ValueError(msg) from exc
     return events
 
 

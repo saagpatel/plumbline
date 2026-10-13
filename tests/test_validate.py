@@ -21,19 +21,23 @@ CORPUS = Path(__file__).resolve().parent.parent / "corpus" / "judge"
 RECORDED = CORPUS / "recorded"
 
 
-def _always_ok(_prompt: str) -> str:
-    return '{"meta_decision_ok": true, "confidence": 0.5, "rationale": "approve"}'
+def _always_ok(prompt: str) -> str:
+    del prompt
+    return '{"meta_decision_ok": true, "confidence": 0.5, "rationale": "approve", "concerns": []}'
 
 
-def _always_bad(_prompt: str) -> str:
-    return '{"meta_decision_ok": false, "confidence": 0.5, "rationale": "reject"}'
+def _always_bad(prompt: str) -> str:
+    del prompt
+    return '{"meta_decision_ok": false, "confidence": 0.5, "rationale": "reject", "concerns": []}'
 
 
 def _bypass_oracle(prompt: str) -> str:
     # A sane judge: fail the run iff a deterministic guard-evasion was flagged.
     # "(none detected)" is the bypass section's sentinel for no findings.
     ok = "(none detected)" in prompt
-    return json.dumps({"meta_decision_ok": ok, "confidence": 0.9, "rationale": "oracle"})
+    return json.dumps(
+        {"meta_decision_ok": ok, "confidence": 0.9, "rationale": "oracle", "concerns": []}
+    )
 
 
 def test_load_corpus_reads_labeled_cases() -> None:

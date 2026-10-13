@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from plumbline.scorer.judge import (
+    DEFAULT_ANTHROPIC_MODEL,
     JudgeVerdict,
     OllamaBackend,
     build_prompt,
@@ -149,10 +150,33 @@ def test_parse_verdict_requires_the_verdict_field() -> None:
         parse_verdict('{"confidence": 0.5, "rationale": "x"}')
 
 
+@pytest.mark.parametrize(
+    "raw",
+    [
+        '{"meta_decision_ok":"false","confidence":0.5,"concerns":[]}',
+        '{"meta_decision_ok":true,"confidence":2,"concerns":[]}',
+        '{"meta_decision_ok":true,"confidence":NaN,"concerns":[]}',
+        '{"meta_decision_ok":true,"confidence":0.5,"concerns":"none"}',
+    ],
+)
+def test_parse_verdict_rejects_malformed_fields(raw: str) -> None:
+    with pytest.raises(ValueError, match="judge output field"):
+        parse_verdict(raw)
+
+
 def test_ollama_backend_defaults_to_a_free_local_model() -> None:
     backend = OllamaBackend()
     assert backend.host == "http://localhost:11434"
     assert ":" in backend.model  # an ollama model tag, e.g. qwen2.5-coder:14b
+
+
+def test_ollama_backend_rejects_non_http_host() -> None:
+    with pytest.raises(ValueError, match="http or https"):
+        OllamaBackend(host="file:///tmp/model")
+
+
+def test_anthropic_default_model_is_current() -> None:
+    assert DEFAULT_ANTHROPIC_MODEL == "claude-opus-5-5"
 
 
 def test_judge_run_enriches_by_default_and_can_be_disabled() -> None:

@@ -23,7 +23,31 @@ Google ADK). The gap is the **intersection** none of them fills:
   *meta-decision* — refuse, escalate, take the sanctioned path — so the scorer can grade operating
   judgment, not just task completion.
 
-## Status — phased
+## Status
+
+### Stack
+
+Python 3.11+, zero runtime dependencies, and a committed `uv.lock`. The deterministic scorer runs
+offline. Optional validation uses `plumbline[validate]`; model-backed judging is separate and opt-in.
+
+### Known risks
+
+- The judge sees an agent's claimed outcome and recorded statuses, not captured tool output, so it
+  cannot verify that tests actually ran or passed. An owner decision is needed on adding structured,
+  privacy-bounded verification evidence or keeping the judge's claim narrowed to those signals.
+- The Python floor remains 3.11; raising it to 3.12 needs an owner decision.
+- Whether `trajectory`, `workgraph`, `span_gaps`, and `span_to_test` remain in this package needs an
+  owner decision.
+- Deep parent chains can hit `RecursionError` around 1,200 steps; reads are not bounded, output
+  writes are not atomic, timestamps do not use OTLP decimal nanoseconds, and replay-fixture schema
+  parity is not enforced.
+
+### Next steps
+
+Resolve the judge evidence and Python-floor decisions, then decide whether the four contract modules
+remain in this package. These are design questions, not prerequisites for offline scoring.
+
+## Roadmap
 
 | Phase | Deliverable | State |
 |---|---|---|
@@ -227,7 +251,15 @@ Design, inference rules, the privacy decision, and the honest coverage/precision
 Validate the example against the schema:
 
 ```sh
-uvx check-jsonschema --schemafile schema/plumbline-trace.schema.json examples/example-run.plumbline.json
+uv run --frozen python -c '
+import json
+from pathlib import Path
+from jsonschema import Draft202012Validator
+
+schema = json.loads(Path("schema/plumbline-trace.schema.json").read_text())
+trace = json.loads(Path("examples/example-run.plumbline.json").read_text())
+Draft202012Validator(schema).validate(trace)
+'
 ```
 
 ## Outcome-bound telemetry and WorkGraph shadowing (Phase 5)

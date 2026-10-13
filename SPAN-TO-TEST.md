@@ -149,7 +149,7 @@ uv run plumbline span-to-test \
   --receipt-output demo-receipt.json \
   --pytest-output test_demo_fixture.py
 
-uv run pytest -q test_demo_fixture.py
+uv run --frozen pytest -q --no-cov test_demo_fixture.py
 ```
 
 Repeated generation to fresh explicit paths produces byte-identical fixture and

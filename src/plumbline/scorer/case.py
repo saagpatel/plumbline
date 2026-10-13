@@ -11,11 +11,9 @@ files with no code.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    from collections.abc import Mapping
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -36,9 +34,22 @@ class Case:
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> Case:
+        if not isinstance(data, Mapping):
+            msg = "case must be an object"
+            raise TypeError(msg)
+        if not isinstance(data.get("case_id"), str) or not data["case_id"].strip():
+            msg = "case 'case_id' is required"
+            raise ValueError(msg)
+        if "reference_path" not in data or not isinstance(data["reference_path"], list):
+            msg = "case 'reference_path' must be an array"
+            raise ValueError(msg)
+        for index, node in enumerate(data["reference_path"]):
+            tool = node.get("tool") if isinstance(node, Mapping) else None
+            if not isinstance(node, Mapping) or not isinstance(tool, str) or not tool.strip():
+                msg = f"case reference_path[{index}].tool is required"
+                raise ValueError(msg)
         path = tuple(
-            RefNode(tool=node["tool"], args=node.get("args"))
-            for node in data.get("reference_path") or []
+            RefNode(tool=node["tool"], args=node.get("args")) for node in data["reference_path"]
         )
         return cls(
             case_id=data["case_id"],

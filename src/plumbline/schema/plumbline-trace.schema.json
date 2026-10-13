@@ -1,0 +1,238 @@
+{
+	"$schema": "https://json-schema.org/draft/2020-12/schema",
+	"$id": "https://plumbline.dev/schema/0.1.0/plumbline-trace.schema.json",
+	"title": "Plumbline Trace",
+	"description": "An open, OpenTelemetry-compatible agent-run trace with a first-class decision-path overlay (subagents, hooks, memory, compaction, permission-mode). One document = one agent run.",
+	"type": "object",
+	"required": ["plumbline_version", "run", "steps"],
+	"additionalProperties": false,
+	"properties": {
+		"plumbline_version": {
+			"type": "string",
+			"pattern": "^0\\.1\\.[0-9]+$",
+			"description": "Schema version this trace conforms to."
+		},
+		"run": { "$ref": "#/$defs/run" },
+		"steps": {
+			"type": "array",
+			"description": "The ordered decision DAG. Order is informative; structure is carried by step_id/parent_step_id/caused_by/subagent_id.",
+			"items": { "$ref": "#/$defs/step" }
+		}
+	},
+	"$defs": {
+		"run": {
+			"type": "object",
+			"required": ["run_id", "harness", "started_at"],
+			"additionalProperties": false,
+			"properties": {
+				"run_id": {
+					"type": "string",
+					"minLength": 1,
+					"description": "Stable id for the run (e.g. the harness session id)."
+				},
+				"harness": {
+					"type": "object",
+					"required": ["name"],
+					"additionalProperties": false,
+					"properties": {
+						"name": {
+							"type": "string",
+							"description": "Producing harness, e.g. 'claude-code', 'cursor', 'aider', 'openhands'."
+						},
+						"version": { "type": ["string", "null"] },
+						"entrypoint": { "type": ["string", "null"] }
+					}
+				},
+				"started_at": { "type": "string", "format": "date-time" },
+				"ended_at": { "type": ["string", "null"], "format": "date-time" },
+				"model": {
+					"type": ["string", "null"],
+					"description": "Primary / launch model id for the run."
+				},
+				"workspace": {
+					"type": ["object", "null"],
+					"additionalProperties": false,
+					"description": "Run context. MUST be PII-scrubbed before publication.",
+					"properties": {
+						"cwd": { "type": ["string", "null"] },
+						"git_branch": { "type": ["string", "null"] }
+					}
+				},
+				"plan": {
+					"anyOf": [{ "$ref": "#/$defs/plan" }, { "type": "null" }],
+					"description": "The on-plan anchor: the stated intent the decision path is scored against."
+				},
+				"outcome": {
+					"type": ["object", "null"],
+					"additionalProperties": false,
+					"properties": {
+						"status": {
+							"enum": ["completed", "failed", "aborted", "unknown", null]
+						},
+						"summary": { "type": ["string", "null"] }
+					}
+				}
+			}
+		},
+		"plan": {
+			"type": "object",
+			"required": ["source", "statement"],
+			"additionalProperties": false,
+			"properties": {
+				"source": {
+					"enum": ["user_prompt", "todo_list", "approved_plan", "system"],
+					"description": "Where the intent came from. 'approved_plan' = an operator-reviewed plan."
+				},
+				"statement": { "type": "string", "minLength": 1 },
+				"items": {
+					"anyOf": [
+						{ "type": "array", "items": { "$ref": "#/$defs/plan_item" } },
+						{ "type": "null" }
+					]
+				}
+			}
+		},
+		"plan_item": {
+			"type": "object",
+			"required": ["id", "text"],
+			"additionalProperties": false,
+			"properties": {
+				"id": { "type": "string", "minLength": 1 },
+				"text": { "type": "string" },
+				"status": {
+					"enum": ["pending", "in_progress", "completed", "skipped", null]
+				}
+			}
+		},
+		"step_kind": {
+			"enum": [
+				"llm",
+				"tool_call",
+				"agent",
+				"decision",
+				"hook",
+				"memory",
+				"compaction",
+				"mode_change"
+			],
+			"description": "Standard layer: llm, tool_call, agent (maps to OTel gen_ai spans). Overlay layer: decision, hook, memory, compaction, mode_change (the harness-control layer OTel does not model)."
+		},
+		"attribution": {
+			"type": ["object", "null"],
+			"additionalProperties": false,
+			"description": "Which skill / MCP tool / agent drove this step, when known.",
+			"properties": {
+				"skill": { "type": ["string", "null"] },
+				"mcp_server": { "type": ["string", "null"] },
+				"mcp_tool": { "type": ["string", "null"] },
+				"agent": { "type": ["string", "null"] }
+			}
+		},
+		"step": {
+			"type": "object",
+			"required": ["step_id", "kind", "started_at"],
+			"additionalProperties": false,
+			"properties": {
+				"step_id": { "type": "string", "minLength": 1 },
+				"parent_step_id": {
+					"type": ["string", "null"],
+					"description": "DAG parent (conversation/nesting spine)."
+				},
+				"caused_by": {
+					"type": ["string", "null"],
+					"description": "The step that triggered this one (e.g. a hook's gated tool_call, a result's originating call)."
+				},
+				"subagent_id": {
+					"type": ["string", "null"],
+					"description": "Which agent context this step belongs to. null = root/main agent; any value = a subagent sidechain."
+				},
+				"kind": { "$ref": "#/$defs/step_kind" },
+				"started_at": { "type": "string", "format": "date-time" },
+				"ended_at": { "type": ["string", "null"], "format": "date-time" },
+				"status": { "enum": ["ok", "error", "interrupted", null] },
+				"attribution": { "$ref": "#/$defs/attribution" },
+				"attributes": {
+					"type": "object",
+					"description": "Kind-specific bag. Standard keys reuse OTel gen_ai.* ; overlay keys use agent.decision.* and harness.* . Open by design; required keys per kind are enforced below."
+				}
+			},
+			"allOf": [
+				{
+					"if": { "properties": { "kind": { "const": "tool_call" } } },
+					"then": {
+						"properties": {
+							"attributes": { "required": ["gen_ai.tool.name"] }
+						}
+					}
+				},
+				{
+					"if": { "properties": { "kind": { "const": "agent" } } },
+					"then": {
+						"properties": {
+							"attributes": { "required": ["agent.type"] }
+						}
+					}
+				},
+				{
+					"if": { "properties": { "kind": { "const": "decision" } } },
+					"then": {
+						"properties": {
+							"attributes": {
+								"required": ["agent.decision.kind"],
+								"properties": {
+									"agent.decision.kind": {
+										"enum": [
+											"proceed",
+											"proceed_sanctioned",
+											"refuse",
+											"escalate",
+											"reroute"
+										]
+									}
+								}
+							}
+						}
+					}
+				},
+				{
+					"if": { "properties": { "kind": { "const": "hook" } } },
+					"then": {
+						"properties": {
+							"attributes": {
+								"required": ["harness.hook.name", "harness.hook.verdict"],
+								"properties": {
+									"harness.hook.verdict": {
+										"enum": ["allow", "deny", "modify", "warn"]
+									}
+								}
+							}
+						}
+					}
+				},
+				{
+					"if": { "properties": { "kind": { "const": "memory" } } },
+					"then": {
+						"properties": {
+							"attributes": {
+								"required": ["harness.memory.op"],
+								"properties": {
+									"harness.memory.op": {
+										"enum": ["read", "write", "update", "delete"]
+									}
+								}
+							}
+						}
+					}
+				},
+				{
+					"if": { "properties": { "kind": { "const": "mode_change" } } },
+					"then": {
+						"properties": {
+							"attributes": { "required": ["harness.mode.to"] }
+						}
+					}
+				}
+			]
+		}
+	}
+}

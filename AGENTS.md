@@ -1,28 +1,43 @@
-<!-- portfolio-context:start -->
-# Portfolio Context
+# Purpose
 
-## What This Project Is
+Plumbline is an OpenTelemetry-compatible agent-trace schema with an offline scorer and a decision-path
+overlay. The Python package supports Python 3.11 and newer and has zero runtime dependencies.
 
-plumbline: An open, OpenTelemetry-compatible agent-trace schema with a first-class decision-path overlay and an offline scorer that grades a trace your harness already produced.
+# Layout
 
-## Current State
+- `src/plumbline/`: package code, including recorder, scorer, contracts, and the packaged trace schema.
+- `schema/`: source-of-truth JSON Schemas.
+- `tests/` and `tests/fixtures/`: synthetic regression coverage and fixtures.
+- `docs` at the repository root: design and contract references such as `SCHEMA.md` and `JUDGE.md`.
 
-Portfolio truth currently marks this project as `active` with `boilerplate` context. Phase 104 recovered minimum-viable context so future sessions can resume without rediscovery.
+# Setup
 
-## Stack
+Use the Python version in `.python-version` and the repository's pinned uv requirement. From the
+repository root, install the committed development lock:
 
-- Primary stack: Python
+```sh
+uv sync --frozen --group dev
+```
 
-## How To Run
+# Checks
 
-- Follow [README development and verification](README.md#development-and-verification) for the locked environment, fixture checks, and opt-in provider lanes.
+Run `make check` for lock, lint, formatting, typing, tests, and build checks. Focused test runs should
+use `uv run --frozen pytest ... --no-cov`; the full test command enforces the configured 80% coverage
+floor.
 
-## Known Risks
+# Boundaries
 
-- This repo only has minimum-viable recovery context today; deeper handoff details may still live in the README and supporting docs.
+- Keep the runtime dependency set empty; validation and model integrations remain optional.
+- The deterministic scorer is offline.
+- Use synthetic data only for development and verification. Do not read or record real transcripts.
+- Do not use `--judge` or contact Ollama or Anthropic to verify code or documentation.
+- Do not add provider calls or secrets to CI.
+- Do not claim that the judge verifies test success: it receives outcome claims and statuses, not
+  captured tool output.
 
-## Next Recommended Move
+# Delivery
 
-Use this context plus the README and supporting docs to resume the next active task, then promote the repo beyond minimum-viable by capturing a dedicated handoff, roadmap, or discovery artifact.
-
-<!-- portfolio-context:end -->
+Keep changes scoped to the requested behavior, preserve the Python 3.11 floor unless the owner decides
+otherwise, and update the relevant tests and documentation with code changes. Report the commands run
+and distinguish local verification from provider or human evidence. Do not publish or release from
+this repository without explicit task authority.

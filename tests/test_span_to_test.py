@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import hashlib
 import json
 import runpy
@@ -669,3 +670,10 @@ def test_cli_receipt_defaults_to_stdout(tmp_path, capsys) -> None:
 def test_pytest_skeleton_refuses_non_sibling_path() -> None:
     with pytest.raises(SpanToTestContractError, match="sibling JSON"):
         render_pytest_skeleton("../fixture.json")
+
+
+def test_pytest_skeleton_escapes_filename_as_python_literal() -> None:
+    malicious = 'x");raise RuntimeError("I");#.json'
+    generated = render_pytest_skeleton(malicious)
+    parsed = ast.parse(generated)
+    assert not [node for node in ast.walk(parsed) if isinstance(node, ast.Raise)]

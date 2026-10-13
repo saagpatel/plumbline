@@ -57,7 +57,7 @@ trace and the judge.
 
 ## Architecture
 
-New module `plumbline/scorer/infer.py`:
+Module `plumbline/scorer/infer.py`:
 
 - `infer_outcome(trace) -> (status, summary)` from the final assistant turn.
 - `infer_decisions(trace) -> list[Step]` from denial- and failure-anchored patterns.
@@ -68,9 +68,8 @@ Wiring:
 
 - The judge path (`judge_run` / `build_prompt`, and `score --judge`) runs `enrich`
   first, so the judge always sees inferred decisions and outcome.
-- Expose the step explicitly for transparency: a `plumbline enrich TRACE` subcommand
-  (or `score --show-inferred`) that prints the enriched trace, so users can audit what
-  was inferred before trusting a verdict.
+- There is no standalone `enrich` command or `--show-inferred` option. Inferred steps
+  are visible to the judge prompt, with provenance attached to each inferred decision.
 
 Provenance (non-negotiable): every inferred step carries
 `agent.decision.inferred = true` and `agent.decision.evidence = [<step_id>, ...]`
@@ -205,9 +204,8 @@ class for weaker judges and never hurts, on this corpus.
 - **Text-tier precision.** Refusal/escalation live mostly in prose. The structural tier
   cannot see them; the text tier may need a model, which is why it stays optional and
   behind the same boundary as the judge backend.
-- **Enrich-by-default vs explicit.** Auto-enriching the judge path is ergonomic but
-  hides work; the `enrich` subcommand plus provenance tags are the transparency
-  counterweight.
+- **Inference visibility.** The judge path applies structural inference automatically;
+  there is no dedicated CLI command to print the enriched trace.
 
 ## Phased delivery
 

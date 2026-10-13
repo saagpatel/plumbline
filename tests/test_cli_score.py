@@ -105,6 +105,20 @@ def test_gate_passes_clean_run_by_default(tmp_path) -> None:
     assert rc == 0
 
 
+def test_score_rejects_empty_trace_and_case(tmp_path, capsys) -> None:
+    trace_path = tmp_path / "trace.json"
+    trace_path.write_text(json.dumps({"run": {"run_id": "empty"}, "steps": []}), encoding="utf-8")
+    case_path = tmp_path / "case.json"
+    case_path.write_text(json.dumps({"case_id": "empty", "reference_path": []}), encoding="utf-8")
+
+    assert main(["score", str(trace_path), str(case_path)]) == 2
+    assert capsys.readouterr().err.count("\n") == 1
+
+    trace_path.write_text(EXAMPLE.read_text(encoding="utf-8"), encoding="utf-8")
+    assert main(["score", str(trace_path), str(case_path)]) == 2
+    assert capsys.readouterr().err.count("\n") == 1
+
+
 _GOOD_VERDICT = (
     '{"meta_decision_ok": true, "confidence": 0.9, "rationale": "sound", "concerns": []}'
 )

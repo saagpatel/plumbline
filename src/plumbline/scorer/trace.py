@@ -14,11 +14,12 @@ the decision path, and the bypass-pattern gate needs to see it.
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Sequence
     from pathlib import Path
 
 # Step kinds that constitute a realized action in the decision path.
@@ -148,9 +149,33 @@ class Trace:
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> Trace:
+        if not isinstance(data, Mapping):
+            msg = "trace must be an object"
+            raise TypeError(msg)
+        if "steps" not in data or not isinstance(data["steps"], list):
+            msg = "trace 'steps' must be an array"
+            raise ValueError(msg)
+        if (
+            not isinstance(data.get("run"), Mapping)
+            or not isinstance(data["run"].get("run_id"), str)
+            or not data["run"]["run_id"].strip()
+        ):
+            msg = "trace 'run.run_id' is required"
+            raise ValueError(msg)
+        for index, step in enumerate(data["steps"]):
+            step_id = step.get("step_id") if isinstance(step, Mapping) else None
+            if not isinstance(step, Mapping) or not isinstance(step_id, str) or not step_id.strip():
+                msg = f"trace steps[{index}].step_id is required"
+                raise ValueError(msg)
+            missing = {"kind", "started_at"} - step.keys()
+            if missing:
+                msg = (
+                    f"trace steps[{index}] missing required field(s): {', '.join(sorted(missing))}"
+                )
+                raise ValueError(msg)
         return cls(
-            run=_run(data.get("run") or {}),
-            steps=tuple(_step(s) for s in data.get("steps") or []),
+            run=_run(data["run"]),
+            steps=tuple(_step(s) for s in data["steps"]),
         )
 
     @classmethod

@@ -5,6 +5,9 @@ Tested against the committed worked example so the model tracks the real shape.
 
 from pathlib import Path
 
+import pytest
+
+from plumbline.scorer.case import Case
 from plumbline.scorer.trace import Trace, names
 
 EXAMPLE = Path(__file__).resolve().parent.parent / "examples" / "example-run.plumbline.json"
@@ -85,3 +88,21 @@ def test_from_dict_with_no_plan_is_tolerated() -> None:
     )
     assert t.run.plan is None
     assert t.path() == []
+
+
+def test_from_dict_requires_trace_arrays_and_identifiers() -> None:
+    with pytest.raises(ValueError, match=r"steps.*array"):
+        Trace.from_dict({"run": {"run_id": "r"}})
+    with pytest.raises(ValueError, match=r"run\.run_id"):
+        Trace.from_dict({"run": {}, "steps": []})
+    with pytest.raises(ValueError, match="step_id"):
+        Trace.from_dict({"run": {"run_id": "r"}, "steps": [{"kind": "tool_call"}]})
+
+
+def test_case_requires_identifiers_and_keeps_explicit_empty_path_valid() -> None:
+    with pytest.raises(ValueError, match="case_id"):
+        Case.from_dict({"reference_path": []})
+    with pytest.raises(ValueError, match=r"reference_path.*array"):
+        Case.from_dict({"case_id": "case"})
+    case = Case.from_dict({"case_id": "empty", "reference_path": []})
+    assert case.reference_path == ()

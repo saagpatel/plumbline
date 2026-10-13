@@ -78,7 +78,7 @@ plumbline aggregate-outcomes run-a.outcome.json run-b.outcome.json -o aggregate.
 plumbline query-outcomes aggregate.json quality-gatekeeper
 ```
 
-Aggregation is deterministic, streaming, and descriptive. It preserves availability,
+Aggregation is deterministic and descriptive. It preserves availability,
 exposure, and adoption counts separately. Only known independent outcome IDs explicitly
 bound to the exact capability state enter that state's cohort; unknown labels are excluded and
 conflicting terminal labels fail closed. An `available` observation with outcome references cannot

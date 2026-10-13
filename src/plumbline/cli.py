@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.resources
 import json
 import sys
 from dataclasses import asdict
@@ -11,7 +12,12 @@ from pathlib import Path
 
 from plumbline.recorders.claude_code import record_session
 from plumbline.scorer.case import Case
-from plumbline.scorer.judge import AnthropicBackend, OllamaBackend, judge_run
+from plumbline.scorer.judge import (
+    DEFAULT_ANTHROPIC_MODEL,
+    AnthropicBackend,
+    OllamaBackend,
+    judge_run,
+)
 from plumbline.scorer.score import score
 from plumbline.scorer.trace import Trace
 from plumbline.scorer.validate import format_report, load_corpus, validate_judge
@@ -40,25 +46,19 @@ from plumbline.trajectory import (
 from plumbline.workgraph import WorkGraphContractError, evaluate_workgraph_shadow_files
 
 
-def _find_schema() -> Path | None:
-    for base in (Path.cwd(), *Path(__file__).resolve().parents):
-        candidate = base / "schema" / "plumbline-trace.schema.json"
-        if candidate.is_file():
-            return candidate
-    return None
-
-
 def _validate(trace: dict, schema_arg: str | None) -> int:
     try:
         from jsonschema import Draft202012Validator  # noqa: PLC0415 - optional dep, lazy by design
     except ImportError:
-        sys.stderr.write("--validate needs jsonschema (uv add jsonschema)\n")
+        sys.stderr.write("--validate needs jsonschema (install plumbline[validate])\n")
         return 1
-    path = Path(schema_arg) if schema_arg else _find_schema()
-    if path is None or not path.is_file():
-        sys.stderr.write("schema not found; pass --schema PATH\n")
-        return 1
-    schema = json.loads(path.read_text())
+    if schema_arg:
+        schema = json.loads(Path(schema_arg).read_text(encoding="utf-8"))
+    else:
+        resource = importlib.resources.files("plumbline").joinpath(
+            "schema/plumbline-trace.schema.json"
+        )
+        schema = json.loads(resource.read_text(encoding="utf-8"))
     errors = sorted(
         Draft202012Validator(schema).iter_errors(trace),
         key=lambda e: [str(p) for p in e.path],
@@ -107,7 +107,7 @@ def _cmd_score(args: argparse.Namespace) -> int:
 
 def _judge_backend(args: argparse.Namespace):  # noqa: ANN202  # pragma: no cover - selection
     if args.backend == "anthropic":
-        return AnthropicBackend(model=args.model or "claude-opus-4-8")
+        return AnthropicBackend(model=args.model or DEFAULT_ANTHROPIC_MODEL)
     return OllamaBackend(model=args.model or "qwen2.5-coder:14b", host=args.host)
 
 
@@ -121,7 +121,7 @@ def _cmd_validate_judge(
 
 
 def _render_json(value: object, output: str | None) -> None:
-    rendered = json.dumps(value, indent=2, sort_keys=True) + "\n"
+    rendered = json.dumps(value, indent=2, sort_keys=True, allow_nan=False) + "\n"
     if output:
         Path(output).write_text(rendered, encoding="utf-8")
     else:
@@ -434,7 +434,13 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0915
     gaps.set_defaults(func=_cmd_span_gaps)
 
     args = parser.parse_args(argv)
-    return int(args.func(args))
+    try:
+        return int(args.func(args))
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError, ValueError, TypeError) as exc:
+        if args.command in {"score", "validate-judge", "record"}:
+            sys.stderr.write(f"INVALID {' '.join(str(exc).splitlines())}\n")
+            return 2
+        raise
 
 
 if __name__ == "__main__":

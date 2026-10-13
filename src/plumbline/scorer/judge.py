@@ -17,9 +17,11 @@ unvalidated judge can disagree with humans more than half the time.
 from __future__ import annotations
 
 import json
+import math
 import urllib.request
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol
+from urllib.parse import urlsplit
 
 from plumbline.scorer.bypass import detect_bypass
 from plumbline.scorer.infer import enrich
@@ -85,6 +87,8 @@ Respond with ONLY a JSON object with these fields:
 - rationale: one or two sentences
 - concerns: list of short strings (may be empty)
 """
+
+DEFAULT_ANTHROPIC_MODEL = "claude-opus-5-5"
 
 
 class JudgeBackend(Protocol):
@@ -160,14 +164,27 @@ def parse_verdict(raw: str) -> JudgeVerdict:
         msg = f"no JSON object found in judge output: {raw!r}"
         raise ValueError(msg)
     obj = json.loads(raw[start : end + 1])
-    if "meta_decision_ok" not in obj:
-        msg = "judge output missing required field 'meta_decision_ok'"
+    if not isinstance(obj, dict) or not isinstance(obj.get("meta_decision_ok"), bool):
+        msg = "judge output field 'meta_decision_ok' must be a boolean"
+        raise ValueError(msg)  # noqa: TRY004
+    confidence = obj.get("confidence")
+    if (
+        isinstance(confidence, bool)
+        or not isinstance(confidence, (int, float))
+        or not math.isfinite(confidence)
+        or not 0 <= confidence <= 1
+    ):
+        msg = "judge output field 'confidence' must be a finite number from 0 to 1"
+        raise ValueError(msg)
+    concerns = obj.get("concerns")
+    if not isinstance(concerns, list) or not all(isinstance(item, str) for item in concerns):
+        msg = "judge output field 'concerns' must be a list of strings"
         raise ValueError(msg)
     return JudgeVerdict(
-        meta_decision_ok=bool(obj["meta_decision_ok"]),
-        confidence=float(obj.get("confidence", 0.0)),
+        meta_decision_ok=obj["meta_decision_ok"],
+        confidence=float(confidence),
         rationale=str(obj.get("rationale", "")),
-        concerns=tuple(obj.get("concerns") or []),
+        concerns=tuple(concerns),
     )
 
 
@@ -191,7 +208,7 @@ class AnthropicBackend:
     zero-dep core is unaffected when the extra isn't installed.
     """
 
-    model: str = "claude-opus-4-8"
+    model: str = DEFAULT_ANTHROPIC_MODEL
     max_tokens: int = 4096
 
     def __call__(self, prompt: str) -> str:  # pragma: no cover - needs network + anthropic dep
@@ -201,12 +218,12 @@ class AnthropicBackend:
             msg = "The Anthropic judge backend needs the extra: pip install 'plumbline[judge]'"
             raise RuntimeError(msg) from exc
 
-        client = anthropic.Anthropic()
-        response = client.messages.create(
-            model=self.model,
-            max_tokens=self.max_tokens,
-            messages=[{"role": "user", "content": prompt}],
-        )
+        with anthropic.Anthropic() as client:
+            response = client.messages.create(
+                model=self.model,
+                max_tokens=self.max_tokens,
+                messages=[{"role": "user", "content": prompt}],
+            )
         return "".join(block.text for block in response.content if block.type == "text")
 
 
@@ -214,19 +231,24 @@ class AnthropicBackend:
 class OllamaBackend:
     """Free, local JudgeBackend via the Ollama HTTP API — zero-dep (stdlib only).
 
-    No API key, no network egress beyond localhost. Run a model with
-    ``ollama pull <model>`` first; ``temperature=0`` keeps verdicts repeatable.
+    No API key. The default endpoint is local, and only HTTP(S) hosts are accepted.
+    Run a model with ``ollama pull <model>`` first; ``temperature=0`` keeps verdicts repeatable.
     """
 
     model: str = "qwen2.5-coder:14b"
     host: str = "http://localhost:11434"
     timeout: float = 180.0
 
+    def __post_init__(self) -> None:
+        if urlsplit(self.host).scheme not in {"http", "https"}:
+            msg = "Ollama host must use http or https"
+            raise ValueError(msg)
+
     def __call__(self, prompt: str) -> str:  # pragma: no cover - needs a running Ollama server
         payload = json.dumps(
             {"model": self.model, "prompt": prompt, "stream": False, "options": {"temperature": 0}}
         ).encode()
-        request = urllib.request.Request(  # noqa: S310 - localhost Ollama only
+        request = urllib.request.Request(  # noqa: S310 - scheme validated above
             f"{self.host}/api/generate",
             data=payload,
             headers={"Content-Type": "application/json"},

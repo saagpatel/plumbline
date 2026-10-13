@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.11"
 
 [[package]]
@@ -391,6 +391,9 @@ source = { editable = "." }
 judge = [
     { name = "anthropic" },
 ]
+validate = [
+    { name = "jsonschema" },
+]
 
 [package.dev-dependencies]
 dev = [
@@ -411,8 +414,11 @@ test = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "anthropic", marker = "extra == 'judge'" }]
-provides-extras = ["judge"]
+requires-dist = [
+    { name = "anthropic", marker = "extra == 'judge'" },
+    { name = "jsonschema", marker = "extra == 'validate'" },
+]
+provides-extras = ["judge", "validate"]
 
 [package.metadata.requires-dev]
 dev = [

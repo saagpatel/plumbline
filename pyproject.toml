@@ -24,6 +24,8 @@ build-backend = "uv_build"
 
 [tool.uv]
 required-version = "==0.13.0"
+# GHSA-6q48-6c7w-9gw2: patch certifi in the optional judge dependency tree.
+constraint-dependencies = ["certifi>=2026.10.18"]
 
 [tool.uv.build-backend]
 source-include = ["src/plumbline/schema/**"]

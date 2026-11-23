@@ -99,6 +99,12 @@ def test_malformed_records_do_not_use_sniff_limit(tmp_path: Path) -> None:
         (b'{"type":"assistant"', "json"),
         (b"\xff", "utf-8"),
         (b"42", "record"),
+        (b'{"type":"attachment","uuid":["synthetic"]}', "uuid"),
+        (
+            b'{"type":"assistant","message":{"content":[{"type":"tool_use",'
+            b'"name":"Agent","input":["synthetic"]}]}}',
+            "input",
+        ),
         (b'{"type":"assistant","message":{"content":[42]}}', "content"),
         (b'{"type":"assistant","message":42}', "message"),
         (b'{"type":"assistant","message":{"content":[]}}', "content"),
@@ -159,8 +165,8 @@ def test_malformed_lines_preserve_valid_events_and_report_line(
     assert tools[0]["status"] == "ok"
     assert len([step for step in trace["steps"] if step["kind"] == "llm"]) == 2
     diagnostics = capsys.readouterr().err.lower()
-    assert "line 2" in diagnostics
-    assert reason in diagnostics
+    assert f"line 2 skipped: {reason}" in diagnostics
+    assert "synthetic" not in diagnostics
     assert "complete" not in diagnostics
 
 

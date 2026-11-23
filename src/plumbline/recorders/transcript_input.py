@@ -44,11 +44,21 @@ def _message_problem(record: JsonObj) -> str | None:
             for block in content
         ):
             return "text"
+        if any(
+            block.get("type") == "tool_use"
+            and "input" in block
+            and not isinstance(block["input"], dict)
+            for block in content
+        ):
+            return "input"
         return None
     return "content"
 
 
 def _record_problem(record: JsonObj) -> str | None:
+    uuid = record.get("uuid")
+    if uuid is not None and not isinstance(uuid, str):
+        return "uuid"
     parent = record.get("parentUuid")
     if parent is not None and not isinstance(parent, str):
         return "parentUuid"

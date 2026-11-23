@@ -340,6 +340,16 @@ def _turn(uid: str, parent: str | None = None, **message) -> dict:
     return {"type": "assistant", "uuid": uid, "parentUuid": parent, "message": message}
 
 
+def test_go_command_identifies_a_bare_final_failure(tmp_path: Path) -> None:
+    call = {"type": "tool_use", "id": "go", "name": "Bash", "input": {"command": "go test ./..."}}
+    result = {"type": "tool_result", "tool_use_id": "go", "content": "FAIL"}
+    trace = _record(
+        tmp_path, _turn("turn", content=[call]), {"type": "user", "message": {"content": [result]}}
+    )
+    (tool,) = steps_of_kind(trace, "tool_call")
+    assert tool["attributes"]["test.outcome"]["errors"] == 1
+
+
 def test_parent_walks_through_result_and_attachment(tmp_path: Path) -> None:
     call = {"type": "tool_use", "name": "Read", "id": "read-toy", "input": {}}
     trace = _record(
@@ -399,6 +409,33 @@ def test_api_error_message_has_error_status(tmp_path: Path) -> None:
         tmp_path, {**_turn("error-turn", content="toy error"), "isApiErrorMessage": True}
     )
     assert trace["steps"][0]["status"] == "error"
+
+
+@pytest.mark.parametrize("split", [False, True])
+@pytest.mark.parametrize("with_uuid", [False, True])
+def test_calls_belong_to_the_invocation_across_fragments(tmp_path: Path, split, with_uuid) -> None:
+    text = {"type": "text", "text": "toy"}
+    calls = [
+        {"type": "tool_use", "name": tool, "id": tool, "input": {}} for tool in ("Read", "Agent")
+    ]
+    first = _turn("first", id="reply", content=[text] if split else [text, *calls])
+    if not with_uuid:
+        del first["uuid"]
+    records = [first]
+    if split:
+        records.append(_turn("second", first.get("uuid"), id="reply", content=calls))
+    trace = _record(tmp_path, *records)
+    (invocation,) = steps_of_kind(trace, "llm")
+    children = steps_of_kind(trace, "tool_call") + steps_of_kind(trace, "agent")
+    assert [step["parent_step_id"] for step in children] == [invocation["step_id"]] * 2
+
+
+def test_skipped_event_name_is_scrubbed(tmp_path: Path, capsys) -> None:
+    label = "ghp_" + "invented" * 5
+    _record(tmp_path, _turn("one", content="start"), {"type": label})
+    diagnostic = capsys.readouterr().err
+    assert label not in diagnostic
+    assert diagnostic == "skipped <token>: 1\n"
 
 
 def test_empty_usage_fragment_contributes_usage_to_message(tmp_path: Path) -> None:

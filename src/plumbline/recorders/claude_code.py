@@ -24,7 +24,7 @@ from typing import Any
 from plumbline.recorders.background import mark_pending, resolve_from_output
 from plumbline.recorders.test_outcome import parse_test_outcome
 from plumbline.recorders.transcript_input import UnsupportedTranscriptFormatError, load_jsonl
-from plumbline.scrub import scrub_obj
+from plumbline.scrub import scrub_obj, scrub_text
 
 PLUMBLINE_VERSION = "0.1.0"
 HARNESS_NAME = "claude-code"
@@ -130,12 +130,12 @@ def _record_steps(  # noqa: C901, PLR0912 - dispatch transcript record types
 
         if etype == "assistant":
             invocation = _record_invocation(ev, _llm_step(ev, sub_id, ts, idx), steps, invocations)
-            if ev.get("uuid"):
-                record_steps[ev["uuid"]] = invocation["step_id"]
+            record_steps[ev.get("uuid") or invocation["step_id"]] = invocation["step_id"]
             for j, block in enumerate(_content(ev)):
                 if block.get("type") == "tool_use":
                     block_id = block.get("id") or f"ev{idx}_tu{j}"
                     step = _tool_step(ev, block, sub_id, ts, block_id)
+                    step["parent_step_id"] = invocation["step_id"]
                     steps.append(step)
                     if block.get("id"):
                         tool_steps[block["id"]] = (idx, step)
@@ -165,7 +165,7 @@ def _record_steps(  # noqa: C901, PLR0912 - dispatch transcript record types
                 record_steps[ev["uuid"]] = step["step_id"]
         else:
             label = (
-                etype
+                scrub_text(etype)
                 if isinstance(etype, str) and re.fullmatch(r"[\w.-]{1,80}", etype)
                 else "unknown"
             )
@@ -346,7 +346,8 @@ def _merge_output(
             if launch_index < call_index and resolve_from_output(launch, step, result, output):
                 pending.pop(index)
                 return
-    if is_bash and (outcome := parse_test_outcome(output)):
+    command = _as_dict(step["attributes"]["tool.arguments"]).get("command")
+    if is_bash and (outcome := parse_test_outcome(output, command=command)):
         step["attributes"]["test.outcome"] = outcome
 
 

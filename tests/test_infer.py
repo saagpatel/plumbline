@@ -6,6 +6,8 @@ key precision boundary: a same-tool re-attempt is a reroute, but a denial follow
 by a *different* operation (the silent-abandon shape) is NOT.
 """
 
+import pytest
+
 from plumbline.scorer.infer import enrich, infer_decisions
 from plumbline.scorer.trace import Trace
 
@@ -20,7 +22,13 @@ def _trace(steps: list[dict]) -> Trace:
     )
 
 
-def _tool(step_id: str, name: str, args: dict, ts: str, status: str = "ok") -> dict:
+def _tool(
+    step_id: str,
+    name: str,
+    args: dict,
+    ts: str,
+    status: str | None = "ok",
+) -> dict:
     return {
         "step_id": step_id,
         "kind": "tool_call",
@@ -137,6 +145,49 @@ def test_no_reroute_for_error_retry_without_fix() -> None:
         [
             _tool("t1", "Bash", {"command": "pytest -q"}, "...01", status="error"),
             _tool("t2", "Bash", {"command": "pytest -q"}, "...02"),
+        ]
+    )
+    assert infer_decisions(trace) == []
+
+
+@pytest.mark.parametrize(
+    ("status", "command", "attrs"),
+    [
+        (
+            None,
+            "pytest toy",
+            {"harness.background_task_id": "toy-task", "harness.background_task_pending": True},
+        ),
+        (
+            "ok",
+            "pytest toy",
+            {"harness.background_task_id": "toy-task", "harness.background_task_pending": True},
+        ),
+        (None, "pytest toy", {}),
+        ("ok", "printf ready", {}),
+        ("ok", "pytest toy", {"test.outcome": {"runner": "pytest", "passed": 2, "failed": 1}}),
+    ],
+)
+def test_unverified_bash_call_does_not_resolve_failure(status, command, attrs) -> None:
+    retry = _tool("retry", "Bash", {"command": command}, "...03", status=status)
+    retry["attributes"].update(attrs)
+    trace = _trace(
+        [
+            _tool("failed", "Bash", {"command": "pytest toy"}, "...01", status="error"),
+            _tool("edit", "Edit", {"file_path": "toy.py"}, "...02"),
+            retry,
+        ]
+    )
+    assert infer_decisions(trace) == []
+
+
+def test_compound_retry_needs_test_evidence() -> None:
+    args = {"command": "false && pytest toy; true"}
+    trace = _trace(
+        [
+            _tool("t1", "Bash", args, "...01", status="error"),
+            _tool("edit", "Edit", {"file_path": "toy.py"}, "...02"),
+            _tool("t2", "Bash", args, "...03"),
         ]
     )
     assert infer_decisions(trace) == []

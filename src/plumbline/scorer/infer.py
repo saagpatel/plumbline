@@ -44,6 +44,25 @@ def _args(step: Step) -> dict:
     return step.attributes.get("tool.arguments") or {}
 
 
+def _successful_reverification(step: Step, failed_step: Step) -> bool:
+    if step.status != "ok" or step.attributes.get("harness.background_task_pending"):
+        return False
+    if _tool_name(step) != "Bash":
+        return True
+    command = _args(step).get("command")
+    if not command or command != _args(failed_step).get("command"):
+        return False
+    outcome = step.attributes.get("test.outcome")
+    if not isinstance(outcome, dict):
+        # A compound command can exit successfully without running its verification.
+        return not failed_step.attributes.get("test.outcome") and not any(
+            operator in command for operator in ("&&", "|", ";", "\n")
+        )
+    if any(outcome.get(key, 0) for key in ("failed", "errors", "skipped", "failed_packages")):
+        return False
+    return any(outcome.get(key, 0) for key in ("passed", "passed_packages"))
+
+
 def _decision(kind: str, ts: str, evidence: Sequence[str], why: str, ctx: str | None) -> Step:
     # The first evidence id is the step the decision responded to (the cause).
     return Step(
@@ -119,7 +138,7 @@ def _reroute_after_error(trace: Trace) -> list[Step]:
             elif (
                 edited
                 and _tool_name(later) == tool
-                and later.status == "ok"
+                and _successful_reverification(later, errored)
                 and later.step_id not in claimed
             ):
                 claimed.add(later.step_id)

@@ -21,7 +21,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-_CREDENTIAL = r"(?:password|passwd|token|secret|api[_-]?key)"
+_CREDENTIAL = r"(?:password|passwd|token|secret|api[_-]?key|aws_secret_access_key)"
 # A credential-bearing assignment or long option, followed by one shell word.
 # Quoted and backslash-escaped spaces are part of the same value.
 _CREDENTIAL_VALUE = re.compile(

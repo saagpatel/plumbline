@@ -150,9 +150,12 @@ def test_recorded_bash_test_evidence_reaches_judge(
     ]
     transcript.write_text("\n".join(map(json.dumps, events)))
     prompt = build_prompt(Trace.from_dict(record_session(transcript)))
-    assert ("pytest toy/test_widget.py" if summary else command) in prompt
+    assert "command=" not in prompt
+    assert "pytest toy/test_widget.py" not in prompt
     assert "shell status=ok" in prompt
     assert evidence in prompt
+    if summary:
+        assert "test outcome: runner=pytest" in prompt
 
 
 def test_build_prompt_keeps_unknown_status_and_bounds_non_command_args() -> None:
@@ -179,6 +182,39 @@ def test_build_prompt_keeps_unknown_status_and_bounds_non_command_args() -> None
     assert "shell status" not in prompt
 
 
+def _bash_prompt(command: str, outcome: dict | None = None) -> str:
+    attrs = {"gen_ai.tool.name": "Bash", "tool.arguments": {"command": command}}
+    if outcome is not None:
+        attrs["test.outcome"] = outcome
+    return build_prompt(
+        Trace.from_dict(
+            {
+                "plumbline_version": "0.1.0",
+                "run": {
+                    "run_id": "r",
+                    "harness": {"name": "x"},
+                    "started_at": "2026-01-01T00:00:00Z",
+                },
+                "steps": [
+                    {
+                        "step_id": "test",
+                        "kind": "tool_call",
+                        "started_at": "2026-01-01T00:00:01Z",
+                        "attributes": attrs,
+                    }
+                ],
+            }
+        )
+    )
+
+
+def test_build_prompt_keeps_non_test_bash_command_at_48_characters() -> None:
+    command = "echo " + "x" * 42 + "UNSHOWN_SUFFIX"
+    prompt = _bash_prompt(command)
+    assert "command=" + command[:48] in prompt
+    assert command[48:] not in prompt
+
+
 @pytest.mark.parametrize("default_recording", [True, False])
 def test_judge_scrubs_credentials_before_selecting_command_window(tmp_path, default_recording):
     command = (
@@ -198,7 +234,64 @@ def test_judge_scrubs_credentials_before_selecting_command_window(tmp_path, defa
         assert marker not in prompt
         if default_recording:
             assert marker not in json.dumps(trace)
-    assert "pytest toy" in prompt
+    assert "pytest toy" not in prompt
+    assert "test outcome=unknown" in prompt
+
+
+def test_judge_does_not_expand_command_display_for_test_runner() -> None:
+    command = "echo " + "x" * 55 + "; AWS_SECRET_ACCESS_KEY=example pytest private-test.py"
+    prompt = _bash_prompt(command, {"runner": "pytest", "passed": 2, "failed": 0})
+    assert "AWS_SECRET_ACCESS_KEY=example" not in prompt
+    assert "private-test.py" not in prompt
+    assert "test outcome: runner=pytest, passed=2, failed=0" in prompt
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "AWS_SECRET_ACCESS_KEY=example pytest private-test.py",
+        "npm test -- private-test.js",
+        "pnpm test -- private-test.js",
+        "yarn test -- private-test.js",
+    ],
+)
+def test_judge_hides_test_command_when_summary_is_missing(command: str) -> None:
+    prompt = _bash_prompt(command)
+    assert command not in prompt
+    assert "private-test.py" not in prompt
+    if "AWS_SECRET_ACCESS_KEY" in command:
+        assert "example" not in prompt
+    assert "command=" not in prompt
+    assert "test outcome=unknown" in prompt
+
+
+def test_judge_uses_only_validated_test_outcome_fields() -> None:
+    outcome = {
+        "runner": "pytest AWS_SECRET_ACCESS_KEY=example",
+        "passed": 3,
+        "failed": -1,
+        "errors": True,
+        "skipped": 1,
+        "passed_packages": 2,
+        "failed_packages": 0,
+        "stdout": "SYNTHETIC_PRIVATE_OUTPUT",
+        "nested": {"token": "SYNTHETIC_NESTED_SECRET"},
+    }
+    prompt = _bash_prompt("pytest", outcome)
+    assert "AWS_SECRET_ACCESS_KEY=example" not in prompt
+    assert "test outcome: runner=" not in prompt
+    assert "passed=3" in prompt
+    assert "skipped=1" in prompt
+    assert "passed_packages=2" in prompt
+    assert "failed=-1" not in prompt
+    assert "errors=True" not in prompt
+    assert "SYNTHETIC_PRIVATE_OUTPUT" not in prompt
+    assert "SYNTHETIC_NESTED_SECRET" not in prompt
+
+
+@pytest.mark.parametrize("runner", ["npm test", "pnpm test", "yarn test"])
+def test_judge_accepts_recorded_package_runner_name(runner) -> None:
+    assert f"runner={runner}, passed=2" in _bash_prompt(runner, {"runner": runner, "passed": 2})
 
 
 def test_parse_verdict_clean_json() -> None:

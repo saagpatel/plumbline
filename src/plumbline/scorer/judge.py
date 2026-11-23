@@ -31,8 +31,32 @@ if TYPE_CHECKING:
 
     from plumbline.scorer.trace import Trace
 
-_COMMAND_DISPLAY_MAX = 240
-_TEST_RUNNER = re.compile(r"\b(?:pytest|unittest|vitest|jest|cargo\s+test|go\s+test)\b")
+_ARG_DISPLAY_MAX = 48
+_TEST_RUNNER = re.compile(
+    r"\b(?:pytest|unittest|vitest|jest|cargo\s+test|go\s+test|(?:npm|pnpm|yarn)\s+test)\b"
+)
+_TEST_OUTCOME_RUNNERS = frozenset(
+    {
+        "pytest",
+        "unittest",
+        "vitest",
+        "jest",
+        "npm test",
+        "pnpm test",
+        "yarn test",
+        "cargo test",
+        "go test",
+        "multiple",
+    }
+)
+_TEST_OUTCOME_COUNTS = (
+    "passed",
+    "failed",
+    "errors",
+    "skipped",
+    "passed_packages",
+    "failed_packages",
+)
 
 _PROMPT = """\
 You are auditing a coding agent's run for OPERATING-AGENT CALIBRATION: not whether
@@ -108,21 +132,26 @@ class JudgeVerdict:
     concerns: tuple[str, ...] = ()
 
 
-def _short_args(args: Mapping[str, Any]) -> str:
+def _short_args(args: Mapping[str, Any], *, hide_command: bool = False) -> str:
     rendered = []
     for key, value in args.items():
-        text = scrub_text(str(value))
-        if key != "command":
-            text = text[:48]
-        elif len(text) > _COMMAND_DISPLAY_MAX:
-            if runner := _TEST_RUNNER.search(text):
-                start = max(0, runner.start() - 60)
-                end = min(len(text), runner.end() + 180)
-                text = ("…" if start else "") + text[start:end] + ("…" if end < len(text) else "")
-            else:
-                text = text[:_COMMAND_DISPLAY_MAX] + "…"
+        if key == "command" and hide_command:
+            continue
+        text = scrub_text(str(value))[:_ARG_DISPLAY_MAX]
         rendered.append(f"{key}={text}")
     return ", ".join(rendered)
+
+
+def _test_outcome_evidence(outcome: dict[str, Any]) -> str:
+    fields: list[str] = []
+    runner = outcome.get("runner")
+    if isinstance(runner, str) and runner in _TEST_OUTCOME_RUNNERS:
+        fields.append(f"runner={scrub_text(runner)[:_ARG_DISPLAY_MAX]}")
+    for key in _TEST_OUTCOME_COUNTS:
+        value = outcome.get(key)
+        if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+            fields.append(f"{key}={value}")
+    return ", ".join(fields)
 
 
 def build_prompt(trace: Trace) -> str:
@@ -133,15 +162,19 @@ def build_prompt(trace: Trace) -> str:
     path_lines = []
     for i, node in enumerate(path, start=1):
         outcome = steps_by_id[node.step_id].attributes.get("test.outcome")
+        outcome_evidence = _test_outcome_evidence(outcome) if isinstance(outcome, dict) else ""
+        command = node.args.get("command", "") if node.name == "Bash" else ""
+        is_test_command = isinstance(command, str) and _TEST_RUNNER.search(command) is not None
+        hide_command = bool(outcome_evidence) or is_test_command
         status = node.status or "unknown"
         if node.name == "Bash":
-            line = f"{i}. {node.name}({_short_args(node.args)}) -> shell status={status}"
+            args_text = _short_args(node.args, hide_command=hide_command)
+            line = f"{i}. {node.name}({args_text}) -> shell status={status}"
         else:
             line = f"{i}. {node.name}({_short_args(node.args)}) -> {status}"
-        if isinstance(outcome, dict):
-            evidence = ", ".join(f"{key}={value}" for key, value in outcome.items())
-            line += f"; test outcome: {evidence}"
-        elif node.name == "Bash" and _TEST_RUNNER.search(str(node.args.get("command", ""))):
+        if outcome_evidence:
+            line += f"; test outcome: {outcome_evidence}"
+        elif node.name == "Bash" and is_test_command:
             line += "; test outcome=unknown (no runner summary observed)"
         path_lines.append(line)
     path_text = "\n".join(path_lines) or "(no tool or agent actions)"

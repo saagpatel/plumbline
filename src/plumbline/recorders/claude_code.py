@@ -140,9 +140,10 @@ def _record_steps(  # noqa: C901, PLR0912 - dispatch transcript record types
                     if block.get("id"):
                         tool_steps[block["id"]] = (idx, step)
         elif etype == "user":
-            for block in _content(ev):
-                if block.get("type") == "tool_result":
-                    _merge_result(tool_steps, block, ev, pending)
+            results = [block for block in _content(ev) if block.get("type") == "tool_result"]
+            raw_result = ev.get("toolUseResult") if len(results) == 1 else None
+            for block in results:
+                _merge_result(tool_steps, block, raw_result, ev.get("timestamp"), pending)
         elif etype == "system":
             if ev.get("subtype") == "api_error":
                 skipped["system.api_error"] += 1
@@ -311,26 +312,29 @@ def _tool_step(ev: JsonObj, block: JsonObj, sub_id: str | None, ts: str, block_i
 
 
 def _merge_result(
-    tool_steps: dict[str, IndexedStep], block: JsonObj, ev: JsonObj, pending: list[IndexedStep]
+    tool_steps: dict[str, IndexedStep],
+    block: JsonObj,
+    raw_result: object,
+    timestamp: str | None,
+    pending: list[IndexedStep],
 ) -> None:
     call = tool_steps.get(block.get("tool_use_id", ""))
     if call is None:
         return
     step = call[1]
-    result = _as_dict(ev.get("toolUseResult"))
+    result = _as_dict(raw_result)
     if result.get("interrupted"):
         step["status"] = "interrupted"
     elif block.get("is_error"):
         step["status"] = "error"
     else:
         step["status"] = "ok"
-    step["ended_at"] = ev.get("timestamp")
+    step["ended_at"] = timestamp
     if step["attributes"].get("gen_ai.tool.name") in {"Bash", "TaskOutput"}:
-        # Event output can acknowledge a background task, but several results can share it.
         _merge_output(
             call,
             result,
-            _result_output(result, block, ev.get("toolUseResult")),
+            _result_output(result, block, raw_result),
             _output_text(block.get("content")),
             pending,
         )

@@ -134,6 +134,47 @@ def test_only_matching_terminal_output_resolves_launch(tmp_path, case) -> None:
             assert attrs["test.outcome"]["failed"] == 1
 
 
+@pytest.mark.parametrize(
+    "metadata",
+    [
+        {"task": {"status": "completed", "exitCode": 0}},
+        {"task": {"id": "task-b", "exitCode": 0}},
+        {"stdout": "Process exited with code 0"},
+    ],
+)
+def test_batched_task_outputs_settle_only_from_their_own_blocks(tmp_path, metadata) -> None:
+    records = []
+    for task in ("task-a", "task-b"):
+        records.extend(
+            [
+                _call(task, "Bash", {"command": "pytest toy"}),
+                _result(task, {"backgroundTaskId": task}, ""),
+                _call(f"lookup-{task}", "TaskOutput", {"task_id": task}),
+            ]
+        )
+    blocks = [
+        {"type": "tool_result", "tool_use_id": "lookup-task-a", "content": "Exited with code 1"},
+        {"type": "tool_result", "tool_use_id": "lookup-task-b", "content": "Still running"},
+    ]
+    records.append(
+        {
+            "type": "user",
+            "timestamp": _TS,
+            "toolUseResult": metadata,
+            "message": {"content": blocks},
+        }
+    )
+    path = tmp_path / "batch.jsonl"
+    path.write_text("\n".join(map(json.dumps, records)))
+
+    steps = {step["step_id"]: step for step in record_session(path)["steps"]}
+    assert steps["task-a"]["status"] == "error"
+    assert steps["task-a"]["ended_at"] == _TS
+    assert steps["task-b"]["status"] is None
+    assert steps["task-b"]["attributes"]["harness.background_task_pending"] is True
+    assert "ended_at" not in steps["task-b"]
+
+
 def test_task_output_started_before_launch_cannot_resolve_it(tmp_path) -> None:
     records = [
         _call("prior", "TaskOutput", {"task_id": _ID}),

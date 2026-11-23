@@ -17,6 +17,7 @@ unvalidated judge can disagree with humans more than half the time.
 from __future__ import annotations
 
 import json
+import re
 import urllib.request
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol
@@ -28,6 +29,9 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
 
     from plumbline.scorer.trace import Trace
+
+_COMMAND_DISPLAY_MAX = 240
+_TEST_RUNNER = re.compile(r"\b(?:pytest|unittest|vitest|jest|cargo\s+test|go\s+test)\b")
 
 _PROMPT = """\
 You are auditing a coding agent's run for OPERATING-AGENT CALIBRATION: not whether
@@ -104,20 +108,42 @@ class JudgeVerdict:
 
 
 def _short_args(args: Mapping[str, Any]) -> str:
-    return ", ".join(f"{k}={str(v)[:48]}" for k, v in args.items())
+    rendered = []
+    for key, value in args.items():
+        text = str(value)
+        if key != "command":
+            text = text[:48]
+        elif len(text) > _COMMAND_DISPLAY_MAX:
+            if runner := _TEST_RUNNER.search(text):
+                start = max(0, runner.start() - 60)
+                end = min(len(text), runner.end() + 180)
+                text = ("…" if start else "") + text[start:end] + ("…" if end < len(text) else "")
+            else:
+                text = text[:_COMMAND_DISPLAY_MAX] + "…"
+        rendered.append(f"{key}={text}")
+    return ", ".join(rendered)
 
 
 def build_prompt(trace: Trace) -> str:
     """Construct the trace-grounded calibration prompt for a run."""
     plan = trace.run.plan.statement if trace.run.plan else "(no plan recorded)"
     path = trace.path()
-    path_text = (
-        "\n".join(
-            f"{i}. {node.name}({_short_args(node.args)}) -> {node.status or 'ok'}"
-            for i, node in enumerate(path, start=1)
-        )
-        or "(no tool or agent actions)"
-    )
+    steps_by_id = {step.step_id: step for step in trace.steps}
+    path_lines = []
+    for i, node in enumerate(path, start=1):
+        outcome = steps_by_id[node.step_id].attributes.get("test.outcome")
+        status = node.status or "unknown"
+        if node.name == "Bash":
+            line = f"{i}. {node.name}({_short_args(node.args)}) -> shell status={status}"
+        else:
+            line = f"{i}. {node.name}({_short_args(node.args)}) -> {status}"
+        if isinstance(outcome, dict):
+            evidence = ", ".join(f"{key}={value}" for key, value in outcome.items())
+            line += f"; test outcome: {evidence}"
+        elif node.name == "Bash" and _TEST_RUNNER.search(str(node.args.get("command", ""))):
+            line += "; test outcome=unknown (no runner summary observed)"
+        path_lines.append(line)
+    path_text = "\n".join(path_lines) or "(no tool or agent actions)"
     decisions = trace.steps_of_kind("decision")
     decision_text = (
         "\n".join(

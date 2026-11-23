@@ -68,6 +68,7 @@ class Step:
     status: str | None = None
     attributes: Mapping[str, Any] = field(default_factory=dict)
     attribution: Mapping[str, Any] | None = None
+    ended_at: str | None = None
 
 
 @dataclass(frozen=True)
@@ -113,6 +114,7 @@ def _step(raw: Mapping[str, Any]) -> Step:
         step_id=raw["step_id"],
         kind=raw["kind"],
         started_at=raw["started_at"],
+        ended_at=raw.get("ended_at"),
         subagent_id=raw.get("subagent_id"),
         parent_step_id=raw.get("parent_step_id"),
         caused_by=raw.get("caused_by"),

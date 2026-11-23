@@ -23,6 +23,7 @@ and a human can weight it as derived, not observed.
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import datetime
 from typing import TYPE_CHECKING
 
 from plumbline.scorer.bypass import detect_bypass, resource_tokens
@@ -34,6 +35,20 @@ if TYPE_CHECKING:
     from plumbline.scorer.trace import Trace
 
 _EDIT_TOOLS = frozenset({"Edit", "Write", "MultiEdit"})
+_OUTCOME_COUNT_KEYS = frozenset(
+    {
+        "passed",
+        "failed",
+        "skipped",
+        "errors",
+        "passed_packages",
+        "failed_packages",
+        "xfailed",
+        "xpassed",
+        "deselected",
+        "warnings",
+    }
+)
 
 
 def _tool_name(step: Step) -> str | None:
@@ -52,15 +67,60 @@ def _successful_reverification(step: Step, failed_step: Step) -> bool:
     command = _args(step).get("command")
     if not command or command != _args(failed_step).get("command"):
         return False
-    outcome = step.attributes.get("test.outcome")
-    if not isinstance(outcome, dict):
+    if "test.outcome" not in step.attributes:
         # A compound command can exit successfully without running its verification.
         return not failed_step.attributes.get("test.outcome") and not any(
             operator in command for operator in ("&&", "|", ";", "\n")
         )
-    if any(outcome.get(key, 0) for key in ("failed", "errors", "skipped", "failed_packages")):
+    counts = _outcome_counts(step.attributes["test.outcome"])
+    return (
+        counts is not None
+        and not any(counts[key] for key in ("failed", "errors", "skipped", "failed_packages"))
+        and any(counts[key] for key in ("passed", "passed_packages"))
+    )
+
+
+def _outcome_counts(outcome: object) -> dict[str, int] | None:
+    if not isinstance(outcome, dict) or not isinstance(outcome.get("runner"), str):
+        return None
+    counts: dict[str, int] = {}
+    for key in _OUTCOME_COUNT_KEYS:
+        value = outcome.get(key, 0)
+        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+            return None
+        counts[key] = value
+    return counts
+
+
+def _is_failure(step: Step) -> bool:
+    if step.status == "error":
+        return True
+    counts = _outcome_counts(step.attributes.get("test.outcome"))
+    return counts is not None and any(
+        counts[key] for key in ("failed", "errors", "failed_packages")
+    )
+
+
+def _completed_before(step: Step, later: Step) -> bool:
+    if step.ended_at is None:
+        # Legacy synchronous steps carry result status and are ordered in the path.
+        return not step.attributes.get("harness.background_task_id")
+    try:
+        return datetime.fromisoformat(step.ended_at) < datetime.fromisoformat(later.started_at)
+    except (TypeError, ValueError):
         return False
-    return any(outcome.get(key, 0) for key in ("passed", "passed_packages"))
+
+
+def _retry_completion_time(retry: Step) -> str | None:
+    if retry.ended_at is not None:
+        try:
+            datetime.fromisoformat(retry.ended_at)
+        except (TypeError, ValueError):
+            return None
+        return retry.ended_at
+    if retry.attributes.get("harness.background_task_id"):
+        return None
+    return retry.started_at
 
 
 def _decision(kind: str, ts: str, evidence: Sequence[str], why: str, ctx: str | None) -> Step:
@@ -126,27 +186,32 @@ def _reroute_after_error(trace: Trace) -> list[Step]:
     out: list[Step] = []
     claimed: set[str] = set()
     for i, errored in enumerate(steps):
-        if errored.kind != "tool_call" or errored.status != "error":
+        if errored.kind != "tool_call" or not _is_failure(errored):
             continue
         tool = _tool_name(errored)
-        edited = False
+        edit_step: Step | None = None
         for later in steps[i + 1 :]:
             if later.subagent_id != errored.subagent_id or later.kind != "tool_call":
                 continue
             if _tool_name(later) in _EDIT_TOOLS:
-                edited = True
+                edit_step = later if later.status == "ok" else None
             elif (
-                edited
+                edit_step is not None
+                and _completed_before(errored, edit_step)
+                and _completed_before(edit_step, later)
                 and _tool_name(later) == tool
                 and _successful_reverification(later, errored)
                 and later.step_id not in claimed
             ):
+                completion_time = _retry_completion_time(later)
+                if completion_time is None:
+                    continue
                 claimed.add(later.step_id)
                 out.append(
                     _decision(
                         "reroute",
-                        later.started_at,
-                        [errored.step_id, later.step_id],
+                        completion_time,
+                        [errored.step_id, edit_step.step_id, later.step_id],
                         f"fixed and re-verified after a failed {tool}",
                         errored.subagent_id,
                     )

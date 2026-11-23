@@ -193,6 +193,126 @@ def test_compound_retry_needs_test_evidence() -> None:
     assert infer_decisions(trace) == []
 
 
+@pytest.mark.parametrize("edit_status", [None, "error"])
+def test_unconfirmed_or_failed_edit_does_not_support_reroute(edit_status) -> None:
+    trace = _trace(
+        [
+            _tool("failed", "Bash", {"command": "pytest toy"}, "...01", status="error"),
+            _tool("edit", "Edit", {"file_path": "toy.py"}, "...02", status=edit_status),
+            _tool("retry", "Bash", {"command": "pytest toy"}, "...03"),
+        ]
+    )
+    assert infer_decisions(trace) == []
+
+
+def test_runner_failure_outcome_can_anchor_a_fix_when_shell_status_is_ok() -> None:
+    initial = _tool("failed", "Bash", {"command": "pytest toy | tail -1"}, "...01")
+    initial["attributes"]["test.outcome"] = {
+        "runner": "pytest",
+        "passed": 0,
+        "failed": 1,
+    }
+    retry = _tool("retry", "Bash", {"command": "pytest toy | tail -1"}, "...03")
+    retry["attributes"]["test.outcome"] = {
+        "runner": "pytest",
+        "passed": 1,
+        "failed": 0,
+    }
+    trace = _trace([initial, _tool("edit", "Edit", {"file_path": "toy.py"}, "...02"), retry])
+
+    decisions = infer_decisions(trace)
+
+    assert len(decisions) == 1
+    assert decisions[0].attributes["agent.decision.evidence"] == ["failed", "edit", "retry"]
+
+
+@pytest.mark.parametrize("observed", ["00:00:07", "00:00:03"])
+def test_background_failure_must_be_observed_before_edit(observed) -> None:
+    background = _tool("failed", "Bash", {"command": "pytest toy"}, "...01", status="error")
+    background["attributes"].update(
+        {"harness.background_task_id": "synthetic-task", "harness.background_task_pending": False}
+    )
+    background["ended_at"] = f"2026-01-01T{observed}Z"
+    edit = _tool("edit", "Edit", {"file_path": "toy.py"}, "2026-01-01T00:00:03Z")
+    edit["ended_at"] = "2026-01-01T00:00:04Z"
+    retry = _tool("retry", "Bash", {"command": "pytest toy"}, "2026-01-01T00:00:05Z")
+    retry["ended_at"] = "2026-01-01T00:00:06Z"
+    trace = _trace([background, edit, retry])
+
+    assert infer_decisions(trace) == []
+
+
+def test_edit_must_finish_before_retry_starts() -> None:
+    failed = _tool("failed", "Bash", {"command": "pytest toy"}, "2026-01-01T00:00:01Z", "error")
+    edit = _tool("edit", "Edit", {"file_path": "toy.py"}, "2026-01-01T00:00:02Z")
+    edit["ended_at"] = "2026-01-01T00:00:06Z"
+    retry = _tool("retry", "Bash", {"command": "pytest toy"}, "2026-01-01T00:00:05Z")
+    retry["ended_at"] = "2026-01-01T00:00:07Z"
+
+    assert infer_decisions(_trace([failed, edit, retry])) == []
+
+
+def test_failure_observed_after_retry_start_is_not_creditable_when_edit_time_is_missing() -> None:
+    failed = _tool("failed", "Bash", {"command": "pytest toy"}, "2026-01-01T00:00:01Z", "error")
+    failed["attributes"]["harness.background_task_id"] = "synthetic-task"
+    failed["ended_at"] = "2026-01-01T00:00:06Z"
+    edit = _tool("edit", "Edit", {"file_path": "toy.py"}, "2026-01-01T00:00:02Z")
+    retry = _tool("retry", "Bash", {"command": "pytest toy"}, "2026-01-01T00:00:05Z")
+    retry["ended_at"] = "2026-01-01T00:00:07Z"
+
+    assert infer_decisions(_trace([failed, edit, retry])) == []
+
+
+def test_background_retry_without_terminal_timestamp_is_not_creditable() -> None:
+    failed = _tool("failed", "Bash", {"command": "pytest toy"}, "...01", "error")
+    edit = _tool("edit", "Edit", {"file_path": "toy.py"}, "...02")
+    retry = _tool("retry", "Bash", {"command": "pytest toy"}, "...03")
+    retry["attributes"].update(
+        {"harness.background_task_id": "retry-task", "harness.background_task_pending": False}
+    )
+
+    assert infer_decisions(_trace([failed, edit, retry])) == []
+
+
+def test_reroute_timestamp_uses_retry_completion_when_available() -> None:
+    failed = _tool("failed", "Bash", {"command": "pytest toy"}, "2026-01-01T00:00:01Z", "error")
+    failed["ended_at"] = "2026-01-01T00:00:02Z"
+    edit = _tool("edit", "Edit", {"file_path": "toy.py"}, "2026-01-01T00:00:03Z")
+    edit["ended_at"] = "2026-01-01T00:00:04Z"
+    retry = _tool("retry", "Bash", {"command": "pytest toy"}, "2026-01-01T00:00:05Z")
+    retry["ended_at"] = "2026-01-01T00:00:06Z"
+    decision = infer_decisions(_trace([failed, edit, retry]))[0]
+
+    assert decision.started_at == retry["ended_at"]
+
+
+def test_edit_completion_comparison_normalizes_timezone_offsets() -> None:
+    failed = _tool("failed", "Bash", {"command": "pytest toy"}, "2026-01-01T00:00:01Z", "error")
+    failed["ended_at"] = "2026-01-01T00:00:02Z"
+    edit = _tool("edit", "Edit", {"file_path": "toy.py"}, "2026-01-01T00:00:03Z")
+    edit["ended_at"] = "2026-01-01T01:00:04+01:00"
+    retry = _tool("retry", "Bash", {"command": "pytest toy"}, "2026-01-01T00:00:05Z")
+
+    assert len(infer_decisions(_trace([failed, edit, retry]))) == 1
+
+
+@pytest.mark.parametrize(
+    "outcome",
+    [
+        {"runner": "pytest", "failed": "0"},
+        {"runner": "pytest", "failed": "1"},
+    ],
+)
+def test_malformed_outcome_counts_do_not_anchor_inference(outcome) -> None:
+    initial = _tool("initial", "Bash", {"command": "pytest toy | tail -1"}, "...01")
+    initial["attributes"]["test.outcome"] = outcome
+    retry = _tool("retry", "Bash", {"command": "pytest toy | tail -1"}, "...03")
+    retry["attributes"]["test.outcome"] = {"runner": "pytest", "passed": "unknown"}
+    trace = _trace([initial, _tool("edit", "Edit", {"file_path": "toy.py"}, "...02"), retry])
+
+    assert infer_decisions(trace) == []
+
+
 def test_enrich_is_noop_when_decisions_already_present() -> None:
     # If a trace already carries decision steps (synthetic/authored), trust them and
     # infer nothing over them.

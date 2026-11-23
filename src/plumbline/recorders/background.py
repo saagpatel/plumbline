@@ -38,7 +38,11 @@ def mark_pending(step: dict[str, Any], result: dict[str, Any], ack_text: str = "
 
 
 def resolve_from_output(
-    launch: dict[str, Any], reader: dict[str, Any], result: dict[str, Any], output: str
+    launch: dict[str, Any],
+    reader: dict[str, Any],
+    result: dict[str, Any],
+    output: str,
+    block_output: str,
 ) -> bool:
     attrs = launch["attributes"]
     if reader["subagent_id"] != launch["subagent_id"] or not _matches_task_output(attrs, reader):
@@ -54,7 +58,7 @@ def resolve_from_output(
     if status is None:
         return False
     command = attrs["tool.arguments"].get("command")
-    if outcome := parse_test_outcome(output, command=command):
+    if outcome := parse_test_outcome(block_output, command=command):
         attrs["test.outcome"] = outcome
     launch["status"] = status
     launch["ended_at"] = reader["ended_at"]

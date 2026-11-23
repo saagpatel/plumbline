@@ -350,6 +350,33 @@ def test_go_command_identifies_a_bare_final_failure(tmp_path: Path) -> None:
     assert tool["attributes"]["test.outcome"]["errors"] == 1
 
 
+def test_test_outcome_uses_only_result_block_content(tmp_path: Path) -> None:
+    calls = [
+        {"type": "tool_use", "id": uid, "name": "Bash", "input": {"command": "pytest toy"}}
+        for uid in ("first", "second")
+    ]
+    results = [
+        {"type": "tool_result", "tool_use_id": "first", "content": "1 failed in 0.01s"},
+        {"type": "tool_result", "tool_use_id": "second", "content": ""},
+    ]
+    trace = _record(
+        tmp_path,
+        _turn("turn", content=calls),
+        {
+            "type": "user",
+            "toolUseResult": {"stdout": "3 failed in 0.01s"},
+            "message": {"content": results},
+        },
+    )
+
+    tools = steps_of_kind(trace, "tool_call")
+
+    assert len(tools) == 2
+    by_id = {tool["step_id"]: tool for tool in tools}
+    assert by_id["first"]["attributes"]["test.outcome"]["failed"] == 1
+    assert "test.outcome" not in by_id["second"]["attributes"]
+
+
 def test_parent_walks_through_result_and_attachment(tmp_path: Path) -> None:
     call = {"type": "tool_use", "name": "Read", "id": "read-toy", "input": {}}
     trace = _record(
@@ -553,13 +580,18 @@ def test_unverified_retry_after_edit_gets_no_credit(tmp_path: Path, retry_result
             f"turn-{uid}", content=[{"type": "tool_use", "id": uid, "name": tool, "input": args}]
         )
 
-    def result(uid: str, *, error: bool = False, **data) -> dict:
-        block = {"type": "tool_result", "tool_use_id": uid, "is_error": error}
+    def result(uid: str, *, error: bool = False, content: str = "", **data) -> dict:
+        block = {
+            "type": "tool_result",
+            "tool_use_id": uid,
+            "is_error": error,
+            "content": content,
+        }
         return {"type": "user", "message": {"content": [block]}, "toolUseResult": data}
 
     records = [
         call("initial", "Bash", command="pytest toy"),
-        result("initial", error=True, stdout="1 failed in 0.01s"),
+        result("initial", error=True, content="1 failed in 0.01s"),
         call("edit", "Edit", file_path="toy.py"),
         result("edit"),
         call("retry", "Bash", command="pytest toy"),
@@ -576,6 +608,8 @@ def test_unverified_retry_after_edit_gets_no_credit(tmp_path: Path, retry_result
         )
     records.extend([call("unrelated", "Bash", command="echo toy"), result("unrelated")])
     trace = Trace.from_dict(_record(tmp_path, *records))
+    initial = next(step for step in trace.steps if step.step_id == "initial")
     retry = next(step for step in trace.steps if step.step_id == "retry")
+    assert initial.attributes["test.outcome"]["failed"] == 1
     assert retry.status == ("error" if retry_result == "failed" else None)
     assert infer_decisions(trace) == []

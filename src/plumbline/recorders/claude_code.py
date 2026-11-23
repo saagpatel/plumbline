@@ -326,7 +326,14 @@ def _merge_result(
         step["status"] = "ok"
     step["ended_at"] = ev.get("timestamp")
     if step["attributes"].get("gen_ai.tool.name") in {"Bash", "TaskOutput"}:
-        _merge_output(call, result, _result_output(result, block, ev.get("toolUseResult")), pending)
+        # Event output can acknowledge a background task, but several results can share it.
+        _merge_output(
+            call,
+            result,
+            _result_output(result, block, ev.get("toolUseResult")),
+            _output_text(block.get("content")),
+            pending,
+        )
     if step["kind"] == "agent" and result.get("agentId"):
         step["attributes"]["agent.spawns_subagent_id"] = result["agentId"]
         if result.get("resolvedModel"):
@@ -336,12 +343,18 @@ def _merge_result(
 
 
 def _merge_output(
-    call: IndexedStep, result: JsonObj, output: str, pending: list[IndexedStep]
+    call: IndexedStep,
+    result: JsonObj,
+    output: str,
+    block_output: str,
+    pending: list[IndexedStep],
 ) -> None:
     call_index, step = call
     if step["attributes"]["gen_ai.tool.name"] == "TaskOutput":
         for index, (launch_index, launch) in enumerate(pending):
-            if launch_index < call_index and resolve_from_output(launch, step, result, output):
+            if launch_index < call_index and resolve_from_output(
+                launch, step, result, output, block_output
+            ):
                 pending.pop(index)
                 break
         return
@@ -349,7 +362,7 @@ def _merge_output(
         pending.append(call)
         return
     command = _as_dict(step["attributes"]["tool.arguments"]).get("command")
-    if outcome := parse_test_outcome(output, command=command):
+    if outcome := parse_test_outcome(block_output, command=command):
         step["attributes"]["test.outcome"] = outcome
 
 
@@ -364,9 +377,17 @@ def _result_output(result: JsonObj, block: JsonObj, raw_result: object) -> str:
         or block.get("content")
         or raw_result
     )
+    return _output_text(content)
+
+
+def _output_text(content: object) -> str:
+    if isinstance(content, str):
+        return content
     if isinstance(content, list):
-        return "\n".join(text for b in content if isinstance(text := _as_dict(b).get("text"), str))
-    return content if isinstance(content, str) else ""
+        return "\n".join(
+            text for item in content if isinstance(text := _as_dict(item).get("text"), str)
+        )
+    return ""
 
 
 def _system_step(

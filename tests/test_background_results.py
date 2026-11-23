@@ -26,6 +26,7 @@ def _result(uid: str, data: dict, text: str, *, error: bool = False) -> dict:
     [
         (None, {}, {}, "", False, None),
         ("TaskOutput", {"task_id": _ID}, {}, "Process exited with code 0", False, "ok"),
+        ("TaskOutput", {"task_id": _ID}, "Process exited with code 0", "", False, "ok"),
         ("TaskOutput", {"task_id": _ID}, {"task": {"status": "completed"}}, "", False, "ok"),
         (
             "TaskOutput",
@@ -72,7 +73,7 @@ def _result(uid: str, data: dict, text: str, *, error: bool = False) -> dict:
         (
             "TaskOutput",
             {"task_id": _ID},
-            {"task": {"exitCode": 0}},
+            {"task": {"exitCode": 0}, "stdout": "4 passed in 0.1s"},
             "1 failed in 0.1s",
             False,
             "ok",
@@ -133,12 +134,12 @@ def test_only_matching_terminal_output_resolves_launch(tmp_path, case) -> None:
             assert attrs["test.outcome"]["failed"] == 1
 
 
-def test_output_read_started_before_launch_cannot_resolve_it(tmp_path) -> None:
+def test_task_output_started_before_launch_cannot_resolve_it(tmp_path) -> None:
     records = [
-        _call("prior", "Read", {"file_path": _PATH}),
+        _call("prior", "TaskOutput", {"task_id": _ID}),
         _call("launch", "Bash", {"command": "pytest toy"}),
         _result("launch", {"backgroundTaskId": _ID, "outputPath": _PATH}, ""),
-        _result("prior", {}, "1 passed in 0.01s"),
+        _result("prior", {"task": {"exitCode": 0}}, "Process exited with code 0"),
     ]
     path = tmp_path / "toy.jsonl"
     path.write_text("\n".join(map(json.dumps, records)))

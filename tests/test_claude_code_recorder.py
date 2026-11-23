@@ -530,6 +530,22 @@ def test_blocking_attachment_identifies_hook_without_summary_infos(tmp_path: Pat
     assert capsys.readouterr().err == ""
 
 
+def test_blocked_hook_entry_sets_aggregate_deny_verdict(tmp_path: Path) -> None:
+    trace = _record(
+        tmp_path,
+        _turn("one", content="start"),
+        {
+            "type": "system",
+            "subtype": "stop_hook_summary",
+            "hookInfos": [{"hookName": "toy-gate", "outcome": "blocked"}],
+        },
+    )
+
+    (hook,) = steps_of_kind(trace, "hook")
+
+    assert hook["attributes"]["harness.hook.verdict"] == "deny"
+
+
 @pytest.mark.parametrize("retry_result", ["missing", "pending", "log_only", "failed"])
 def test_unverified_retry_after_edit_gets_no_credit(tmp_path: Path, retry_result: str) -> None:
     def call(uid: str, tool: str, **args) -> dict:

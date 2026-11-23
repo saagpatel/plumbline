@@ -412,7 +412,7 @@ def _system_step(
             "harness.hook.prevented_continuation": prevented,
         }
         if subtype == "stop_hook_summary":
-            attrs["harness.hook.entries"] = [
+            entries = [
                 {
                     k: v
                     for k, v in _as_dict(entry).items()
@@ -421,6 +421,9 @@ def _system_step(
                 }
                 for entry in infos
             ]
+            attrs["harness.hook.entries"] = entries
+            if any(entry.get("outcome") == "blocked" for entry in entries):
+                attrs["harness.hook.verdict"] = "deny"
         if ev.get("toolUseID"):
             attrs["harness.hook.target_step_id"] = ev["toolUseID"]
         step = _base_step(ev.get("uuid") or f"sys{idx}", "hook", ev, sub_id, ts)

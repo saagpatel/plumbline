@@ -22,10 +22,11 @@ import re
 from typing import Any
 
 _CREDENTIAL = r"(?:password|passwd|token|secret|api[_-]?key|aws_secret_access_key)"
+_ENV_LABEL = rf"(?:[\w]+_)?{_CREDENTIAL}="
 # A credential-bearing assignment or long option, followed by one shell word.
 # Quoted and backslash-escaped spaces are part of the same value.
 _CREDENTIAL_VALUE = re.compile(
-    rf"(?i)(?P<label>\b(?:[\w]+_)?{_CREDENTIAL}=|--(?:[\w-]+-)?{_CREDENTIAL}(?:=|[ \t]+))"
+    rf"(?i)(?P<label>\b{_ENV_LABEL}|--(?:[\w-]+-)?{_CREDENTIAL}(?:=|[ \t]+))"
     r"""(?:\\[\s\S]|'[^']*(?:'|$)|"(?:\\[\s\S]|[^"\\])*(?:"|$)|[^\s\\'";|&()<>])+"""
 )
 
@@ -33,6 +34,10 @@ _CREDENTIAL_VALUE = re.compile(
 # provider prefix so ordinary words ("skip_...", "patient-...", "pattern_...")
 # are NOT mistaken for secrets.
 _PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    # A quote before the variable encloses the entire assignment. A captured
+    # summary can end before the closing quote.
+    (re.compile(rf"(?i)('{_ENV_LABEL})[^']*('|\Z)"), r"\1<redacted>\2"),
+    (re.compile(rf'(?i)("{_ENV_LABEL})(?:\\(?:[\s\S]|\Z)|[^"\\])*("|\Z)'), r"\1<redacted>\2"),
     (_CREDENTIAL_VALUE, r"\g<label><redacted>"),
     (re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"), "<email>"),
     (re.compile(r"\b(?:sk|ghp|gho|ghs|ghu|ghr|xox[baprs])[-_][A-Za-z0-9._-]{16,}"), "<token>"),

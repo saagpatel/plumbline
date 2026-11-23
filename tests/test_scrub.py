@@ -28,6 +28,43 @@ def test_short_command_preview_scrubs_aws_secret_assignment() -> None:
     assert scrub_text(command) == "AWS_SECRET_ACCESS_KEY=<redacted> echo toy"
 
 
+def test_scrub_whole_quoted_environment_assignments() -> None:
+    for quote, value in [
+        ("'", "two words"),
+        ('"', "toy dog's word"),
+        ('"', r"toy \"quoted\" word"),
+        ("'", "synthetic first line\nfake second line"),
+    ]:
+        command = f"env {quote}DB_PASSWORD={value}{quote} cmd"
+        assert scrub_text(command) == f"env {quote}DB_PASSWORD=<redacted>{quote} cmd"
+
+
+def test_scrub_assignment_truncated_inside_recorded_summary() -> None:
+    assert scrub_text('env "DB_PASSWORD=two fake words') == 'env "DB_PASSWORD=<redacted>'
+
+
+def test_quoted_environment_assignment_is_scrubbed_from_recorded_trace(tmp_path) -> None:
+    path = tmp_path / "synthetic.jsonl"
+    command = 'env "DB_PASSWORD=toy dog\'s word" cmd FAKE_TRAILING_MARKER'
+    call = {"type": "tool_use", "id": "call", "name": "Bash", "input": {"command": command}}
+    path.write_text(
+        "\n".join(
+            map(
+                json.dumps,
+                [
+                    {"type": "user", "message": {"content": "toy"}},
+                    {"type": "assistant", "message": {"content": [call]}},
+                ],
+            )
+        )
+    )
+    trace = record_session(path)
+    (step,) = [step for step in trace["steps"] if step["kind"] == "tool_call"]
+    assert step["attributes"]["tool.arguments"]["command"] == (
+        'env "DB_PASSWORD=<redacted>" cmd FAKE_TRAILING_MARKER'
+    )
+
+
 def test_scrub_keeps_ordinary_identifiers() -> None:
     # Must NOT over-redact: these look prefix-ish but are not secrets.
     text = "skip_empty_lines patient-monitoring pattern_match_score ghost_mode"

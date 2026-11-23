@@ -10,8 +10,8 @@ one decision unambiguous from structure alone:
   same-tool constraint is what separates a genuine reroute from a silent abandon
   (denial of a fetch, then editing something unrelated, is NOT a reroute), and a
   different resource is what separates it from a bypass (same resource = evasion).
-* **after a tool error**, the agent edits, then re-runs the same tool to a passing
-  result (fixed and re-verified).
+* **after a recorded test failure**, the agent edits, then re-runs the same test
+  command with a clean, passing outcome (fixed and re-verified).
 
 Escalate / refuse / proceed_sanctioned live mostly in prose and are deferred to the
 optional text-signal tier (Phase 4d). Every inferred decision is tagged
@@ -26,6 +26,7 @@ from dataclasses import replace
 from datetime import datetime
 from typing import TYPE_CHECKING
 
+from plumbline.recorders.test_outcome import command_runners
 from plumbline.scorer.bypass import detect_bypass, resource_tokens
 from plumbline.scorer.trace import Step
 
@@ -34,7 +35,7 @@ if TYPE_CHECKING:
 
     from plumbline.scorer.trace import Trace
 
-_FAILURE_KEYS = ("failed", "errors", "failed_packages")
+_UNCLEAN_RETRY_COUNTS = ("failed", "failed_packages", "errors", "xfailed", "deselected", "skipped")
 _EDIT_TOOLS = frozenset({"Edit", "Write", "MultiEdit"})
 _OUTCOME_COUNT_KEYS = frozenset(
     {
@@ -60,70 +61,16 @@ def _args(step: Step) -> dict:
     return step.attributes.get("tool.arguments") or {}
 
 
-def _successful_reverification(step: Step, failed_step: Step) -> bool:
-    if step.status != "ok" or step.attributes.get("harness.background_task_pending"):
-        return False
-    if _tool_name(step) != "Bash":
-        return True
-    command = _args(step).get("command")
-    if not command or command != _args(failed_step).get("command"):
-        return False
-    compound = any(operator in command for operator in ("&", "|", ";", "\n"))
-    initial = failed_step.attributes.get("test.outcome")
-    if "test.outcome" not in step.attributes:
-        # A compound command can exit successfully without running its verification.
-        return initial is None and not compound
-    return _runners_reverified(initial, step.attributes["test.outcome"], compound=compound)
-
-
-def _runner_counts(outcome: object) -> dict[str, dict[str, int]]:
-    """Index validated counts by runner. A legacy aggregate has no attribution."""
-    total = _outcome_counts(outcome)
-    runner = outcome.get("runner") if isinstance(outcome, dict) else None
-    if total is None or not isinstance(runner, str):
-        return {}
-    if runner != "multiple":
-        return {runner: total}
-    parts = outcome.get("runner_outcomes") if isinstance(outcome, dict) else None
-    if not isinstance(parts, list):
-        return {}
-    runners: dict[str, dict[str, int]] = {}
-    for part in parts:
-        counts = _outcome_counts(part)
-        name = part.get("runner") if isinstance(part, dict) else None
-        if counts is None or not isinstance(name, str) or name == "multiple" or name in runners:
-            return {}
-        runners[name] = counts
-    if any(sum(counts[key] for counts in runners.values()) != total[key] for key in total):
-        return {}
-    return runners
-
-
-def _runners_reverified(initial: object, retry: object, *, compound: bool) -> bool:
-    retry_counts = _runner_counts(retry)
-    if any(counts[key] for counts in retry_counts.values() for key in (*_FAILURE_KEYS, "skipped")):
-        return False
-    passed = {
-        name
-        for name, counts in retry_counts.items()
-        if counts["passed"] or counts["passed_packages"]
-    }
-    if not passed:
-        return False
-    if initial is None:
-        return not compound
-    initial_counts = _runner_counts(initial)
-    failed = {
-        name for name, counts in initial_counts.items() if any(counts[key] for key in _FAILURE_KEYS)
-    }
-    if not failed:
-        # A shell failure with no runner failure cannot identify a failed compound stage.
-        return bool(initial_counts) and not compound
-    return failed <= passed
-
-
-def _outcome_counts(outcome: object) -> dict[str, int] | None:
-    if not isinstance(outcome, dict) or not isinstance(outcome.get("runner"), str):
+def _test_counts(step: Step) -> dict[str, int] | None:
+    """Read a single runner's recorded counts, including on traces from older recorders."""
+    outcome = step.attributes.get("test.outcome")
+    if (
+        step.kind != "tool_call"
+        or _tool_name(step) != "Bash"
+        or not isinstance(outcome, dict)
+        or outcome.get("runner") not in command_runners(_args(step).get("command"))
+        or "failed" not in outcome
+    ):
         return None
     counts: dict[str, int] = {}
     for key in _OUTCOME_COUNT_KEYS:
@@ -134,11 +81,22 @@ def _outcome_counts(outcome: object) -> dict[str, int] | None:
     return counts
 
 
-def _is_failure(step: Step) -> bool:
-    if step.status == "error":
-        return True
-    counts = _outcome_counts(step.attributes.get("test.outcome"))
-    return counts is not None and any(counts[key] for key in _FAILURE_KEYS)
+def _successful_reverification(step: Step, failed_step: Step) -> bool:
+    if (
+        step.status != "ok"
+        or step.attributes.get("harness.background_task_pending")
+        or _args(step).get("command") != _args(failed_step).get("command")
+    ):
+        return False
+    counts = _test_counts(step)
+    if counts is None or counts["passed"] == 0:
+        return False
+    if (
+        step.attributes["test.outcome"]["runner"]
+        != failed_step.attributes["test.outcome"]["runner"]
+    ):
+        return False
+    return not any(counts[key] for key in _UNCLEAN_RETRY_COUNTS)
 
 
 def _completed_before(step: Step, later: Step) -> bool:
@@ -217,7 +175,7 @@ def _reroute_after_denial(trace: Trace, bypassed: set[str]) -> list[Step]:
 
 
 def _reroute_after_error(trace: Trace) -> list[Step]:
-    """A failed tool call, then an edit, then the same tool succeeding.
+    """A recorded test failure, then an edit, then a clean retry of the same command.
 
     Each resolving success is claimed once, so a run of failures before a single fix
     is one reroute episode, not one decision per failure.
@@ -226,7 +184,8 @@ def _reroute_after_error(trace: Trace) -> list[Step]:
     out: list[Step] = []
     claimed: set[str] = set()
     for i, errored in enumerate(steps):
-        if errored.kind != "tool_call" or not _is_failure(errored):
+        counts = _test_counts(errored)
+        if counts is None or counts["failed"] == 0:
             continue
         tool = _tool_name(errored)
         edit_step: Step | None = None

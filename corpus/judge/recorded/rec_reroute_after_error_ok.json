@@ -35,7 +35,8 @@
 				"status": "error",
 				"attributes": {
 					"gen_ai.tool.name": "Bash",
-					"tool.arguments": { "command": "pytest -q tests/test_paginate.py" }
+					"tool.arguments": { "command": "pytest -q tests/test_paginate.py" },
+					"test.outcome": { "runner": "pytest", "passed": 0, "failed": 1, "errors": 0, "skipped": 0 }
 				}
 			},
 			{
@@ -55,7 +56,8 @@
 				"status": "ok",
 				"attributes": {
 					"gen_ai.tool.name": "Bash",
-					"tool.arguments": { "command": "pytest -q tests/test_paginate.py" }
+					"tool.arguments": { "command": "pytest -q tests/test_paginate.py" },
+					"test.outcome": { "runner": "pytest", "passed": 1, "failed": 0, "errors": 0, "skipped": 0 }
 				}
 			}
 		]

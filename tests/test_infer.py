@@ -8,6 +8,7 @@ by a *different* operation (the silent-abandon shape) is NOT.
 
 import pytest
 
+from plumbline.recorders.test_outcome import parse_test_outcome
 from plumbline.scorer.infer import enrich, infer_decisions
 from plumbline.scorer.trace import Trace
 
@@ -224,6 +225,66 @@ def test_runner_failure_outcome_can_anchor_a_fix_when_shell_status_is_ok() -> No
 
     assert len(decisions) == 1
     assert decisions[0].attributes["agent.decision.evidence"] == ["failed", "edit", "retry"]
+
+
+def _compound_retry(initial: object, retry: object) -> list:
+    args = {"command": "pytest unit; jest integration; true"}
+    first = _tool("first", "Bash", args, "...01")
+    first["attributes"]["test.outcome"] = initial
+    last = _tool("retry", "Bash", args, "...03")
+    last["attributes"]["test.outcome"] = retry
+    return infer_decisions(_trace([first, _tool("edit", "Edit", {}, "...02"), last]))
+
+
+@pytest.mark.parametrize(
+    ("first", "retry", "credited"),
+    [
+        (
+            "1 passed in 0.1s\nTests: 1 failed, 1 total",
+            "1 passed in 0.1s\njest: command not found",
+            False,
+        ),
+        ("Tests: 1 failed, 1 total", "1 passed in 0.1s", False),
+        ("1 failed in 0.1s\nTests: 1 failed, 1 total", "Tests: 1 passed, 1 total", False),
+        ("1 passed in 0.1s\nTests: 1 failed, 1 total", "Tests: 1 passed, 1 total", True),
+        (
+            "1 failed in 0.1s\nTests: 1 failed, 1 total",
+            "1 passed in 0.1s\nTests: 1 passed, 1 total",
+            True,
+        ),
+    ],
+)
+def test_compound_retry_must_pass_each_runner_that_failed(first, retry, credited) -> None:
+    command = "pytest unit; jest integration; true"
+    decisions = _compound_retry(
+        parse_test_outcome(first, command=command), parse_test_outcome(retry, command=command)
+    )
+    assert bool(decisions) is credited
+
+
+@pytest.mark.parametrize(
+    "breakdown",
+    [{}, {"runner_outcomes": []}, {"runner_outcomes": [{"runner": "jest", "failed": 0}]}],
+)
+def test_unattributed_compound_failure_stays_unknown(breakdown) -> None:
+    initial = {"runner": "multiple", "failed": 1, **breakdown}
+    assert _compound_retry(initial, {"runner": "jest", "passed": 1}) == []
+
+
+def test_failed_edit_after_successful_fix_does_not_cancel_retry_credit() -> None:
+    trace = _trace(
+        [
+            _tool("failed", "Bash", {"command": "pytest toy"}, "...01", status="error"),
+            _tool("fix", "Edit", {"file_path": "toy.py"}, "...02"),
+            _tool("unrelated", "Edit", {"file_path": "README.md"}, "...03", status="error"),
+            _tool("retry", "Bash", {"command": "pytest toy"}, "...04"),
+        ]
+    )
+
+    decisions = infer_decisions(trace)
+
+    assert len(decisions) == 1
+    assert decisions[0].attributes["agent.decision.evidence"] == ["failed", "fix", "retry"]
 
 
 @pytest.mark.parametrize("observed", ["00:00:07", "00:00:03"])

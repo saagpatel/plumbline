@@ -34,6 +34,7 @@ if TYPE_CHECKING:
 
     from plumbline.scorer.trace import Trace
 
+_FAILURE_KEYS = ("failed", "errors", "failed_packages")
 _EDIT_TOOLS = frozenset({"Edit", "Write", "MultiEdit"})
 _OUTCOME_COUNT_KEYS = frozenset(
     {
@@ -67,17 +68,58 @@ def _successful_reverification(step: Step, failed_step: Step) -> bool:
     command = _args(step).get("command")
     if not command or command != _args(failed_step).get("command"):
         return False
+    compound = any(operator in command for operator in ("&", "|", ";", "\n"))
+    initial = failed_step.attributes.get("test.outcome")
     if "test.outcome" not in step.attributes:
         # A compound command can exit successfully without running its verification.
-        return not failed_step.attributes.get("test.outcome") and not any(
-            operator in command for operator in ("&&", "|", ";", "\n")
-        )
-    counts = _outcome_counts(step.attributes["test.outcome"])
-    return (
-        counts is not None
-        and not any(counts[key] for key in ("failed", "errors", "skipped", "failed_packages"))
-        and any(counts[key] for key in ("passed", "passed_packages"))
-    )
+        return initial is None and not compound
+    return _runners_reverified(initial, step.attributes["test.outcome"], compound=compound)
+
+
+def _runner_counts(outcome: object) -> dict[str, dict[str, int]]:
+    """Index validated counts by runner. A legacy aggregate has no attribution."""
+    total = _outcome_counts(outcome)
+    runner = outcome.get("runner") if isinstance(outcome, dict) else None
+    if total is None or not isinstance(runner, str):
+        return {}
+    if runner != "multiple":
+        return {runner: total}
+    parts = outcome.get("runner_outcomes") if isinstance(outcome, dict) else None
+    if not isinstance(parts, list):
+        return {}
+    runners: dict[str, dict[str, int]] = {}
+    for part in parts:
+        counts = _outcome_counts(part)
+        name = part.get("runner") if isinstance(part, dict) else None
+        if counts is None or not isinstance(name, str) or name == "multiple" or name in runners:
+            return {}
+        runners[name] = counts
+    if any(sum(counts[key] for counts in runners.values()) != total[key] for key in total):
+        return {}
+    return runners
+
+
+def _runners_reverified(initial: object, retry: object, *, compound: bool) -> bool:
+    retry_counts = _runner_counts(retry)
+    if any(counts[key] for counts in retry_counts.values() for key in (*_FAILURE_KEYS, "skipped")):
+        return False
+    passed = {
+        name
+        for name, counts in retry_counts.items()
+        if counts["passed"] or counts["passed_packages"]
+    }
+    if not passed:
+        return False
+    if initial is None:
+        return not compound
+    initial_counts = _runner_counts(initial)
+    failed = {
+        name for name, counts in initial_counts.items() if any(counts[key] for key in _FAILURE_KEYS)
+    }
+    if not failed:
+        # A shell failure with no runner failure cannot identify a failed compound stage.
+        return bool(initial_counts) and not compound
+    return failed <= passed
 
 
 def _outcome_counts(outcome: object) -> dict[str, int] | None:
@@ -96,9 +138,7 @@ def _is_failure(step: Step) -> bool:
     if step.status == "error":
         return True
     counts = _outcome_counts(step.attributes.get("test.outcome"))
-    return counts is not None and any(
-        counts[key] for key in ("failed", "errors", "failed_packages")
-    )
+    return counts is not None and any(counts[key] for key in _FAILURE_KEYS)
 
 
 def _completed_before(step: Step, later: Step) -> bool:
@@ -194,7 +234,8 @@ def _reroute_after_error(trace: Trace) -> list[Step]:
             if later.subagent_id != errored.subagent_id or later.kind != "tool_call":
                 continue
             if _tool_name(later) in _EDIT_TOOLS:
-                edit_step = later if later.status == "ok" else None
+                if later.status == "ok":
+                    edit_step = later
             elif (
                 edit_step is not None
                 and _completed_before(errored, edit_step)

@@ -338,8 +338,10 @@ harness-specific recorders. No PII in any published trace.
 
 ## Development and verification
 
-Use Python 3.11+ and uv from the repository root. Install the committed lockfile's
-development groups into an isolated checkout/environment:
+Use Python 3.11+ and uv 0.13.9 or a later 0.13.x. The repository pins uv to
+`>=0.13.9,<0.14` and rejects 0.14 until the pin is raised. CI runs exactly uv 0.13.9.
+From the repository root, install the committed lockfile's development groups into an
+isolated checkout/environment:
 
 ```sh
 uv sync --frozen --group dev

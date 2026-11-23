@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 from plumbline.recorders.test_outcome import mentions_test_invocation
 from plumbline.scorer.bypass import detect_bypass
 from plumbline.scorer.infer import enrich
-from plumbline.scrub import scrub_text
+from plumbline.scrub import scrub_argument, scrub_text
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -51,6 +51,8 @@ _TEST_OUTCOME_COUNTS = (
     "failed",
     "errors",
     "skipped",
+    "deselected",
+    "xfailed",
     "passed_packages",
     "failed_packages",
 )
@@ -129,13 +131,11 @@ class JudgeVerdict:
     concerns: tuple[str, ...] = ()
 
 
-def _short_args(args: Mapping[str, Any], *, hide_command: bool = False) -> str:
+def _short_args(args: Mapping[str, Any]) -> str:
     rendered = []
     for key, value in args.items():
-        if key == "command" and hide_command:
-            continue
-        text = scrub_text(str(value))[:_ARG_DISPLAY_MAX]
-        rendered.append(f"{key}={text}")
+        preview = scrub_argument(key, str(value))[:_ARG_DISPLAY_MAX]
+        rendered.append(f"{scrub_text(key)}={preview}")
     return ", ".join(rendered)
 
 
@@ -162,13 +162,10 @@ def build_prompt(trace: Trace) -> str:
         outcome_evidence = _test_outcome_evidence(outcome) if isinstance(outcome, dict) else ""
         command = node.args.get("command", "") if node.name == "Bash" else ""
         is_test_command = isinstance(command, str) and mentions_test_invocation(command)
-        hide_command = bool(outcome_evidence) or is_test_command
-        status = node.status or "unknown"
+        status = scrub_text(node.status or "unknown")
         if node.name == "Bash":
-            args_text = _short_args(node.args, hide_command=hide_command)
-            line = f"{i}. {node.name}({args_text}) -> shell status={status}"
-        else:
-            line = f"{i}. {node.name}({_short_args(node.args)}) -> {status}"
+            status = f"shell status={status}"
+        line = f"{i}. {scrub_text(node.name)}({_short_args(node.args)}) -> {status}"
         if outcome_evidence:
             line += f"; test outcome: {outcome_evidence}"
         elif node.name == "Bash" and is_test_command:
@@ -178,8 +175,8 @@ def build_prompt(trace: Trace) -> str:
     decisions = trace.steps_of_kind("decision")
     decision_text = (
         "\n".join(
-            f"- {s.attributes.get('agent.decision.kind', '?')}: "
-            f"{s.attributes.get('agent.decision.rationale', '')}"
+            f"- {scrub_text(str(s.attributes.get('agent.decision.kind', '?')))}: "
+            f"{scrub_text(str(s.attributes.get('agent.decision.rationale', '')))}"
             for s in decisions
         )
         or "(none)"
@@ -189,8 +186,8 @@ def build_prompt(trace: Trace) -> str:
     ]
     deny_text = (
         "\n".join(
-            f"- {s.attributes.get('harness.hook.name', '?')}: "
-            f"{s.attributes.get('harness.hook.reason', 'denied')}"
+            f"- {scrub_text(str(s.attributes.get('harness.hook.name', '?')))}: "
+            f"{scrub_text(str(s.attributes.get('harness.hook.reason', 'denied')))}"
             for s in denies
         )
         or "(none)"
@@ -199,23 +196,23 @@ def build_prompt(trace: Trace) -> str:
     bypass_text = (
         "\n".join(
             f"- Re-attempted a guard-denied resource after a deny verdict "
-            f"(denied step {finding.denied_step_id}, retry step {finding.retry_step_id})."
+            f"(denied step {scrub_text(finding.denied_step_id)}, "
+            f"retry step {scrub_text(finding.retry_step_id)})."
             for finding in bypass
         )
         or "(none detected)"
     )
-    status = trace.run.outcome_status or "unknown"
+    status = scrub_text(trace.run.outcome_status or "unknown")
     summary = trace.run.outcome_summary
-    outcome_text = f"{status} — {summary}" if summary else status
-    prompt = _PROMPT.format(
-        plan=plan,
+    outcome_text = f"{status} — {scrub_text(summary)}" if summary else status
+    return _PROMPT.format(
+        plan="\n".join(scrub_text(line) for line in plan.split("\n")),
         path=path_text,
         decisions=decision_text,
         denies=deny_text,
         bypass=bypass_text,
         outcome=outcome_text,
     )
-    return scrub_text(prompt)
 
 
 def parse_verdict(raw: str) -> JudgeVerdict:

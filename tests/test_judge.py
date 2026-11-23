@@ -5,6 +5,7 @@ trace-grounding are pinned without the optional Anthropic dependency.
 """
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -17,7 +18,8 @@ from plumbline.scorer.judge import (
     judge_run,
     parse_verdict,
 )
-from plumbline.scorer.trace import Trace
+from plumbline.scorer.trace import Plan, Trace
+from plumbline.scrub import scrub_text
 
 EXAMPLE = Path(__file__).resolve().parent.parent / "examples" / "example-run.plumbline.json"
 
@@ -86,7 +88,7 @@ def test_build_prompt_surfaces_deterministic_bypass() -> None:
     assert "guard-denied" in prompt
 
 
-def test_build_prompt_scrubs_assembled_bypass_evidence() -> None:
+def test_build_prompt_scrubs_bypass_evidence() -> None:
     fake_resource = "synthetic/credentialvalue"
     trace = _bypass_trace()
     for step in trace.steps:
@@ -101,6 +103,15 @@ def test_build_prompt_scrubs_assembled_bypass_evidence() -> None:
     prompt = build_prompt(trace)
     assert fake_resource not in prompt
     assert "Re-attempted a guard-denied resource after a deny verdict" in prompt
+
+
+def test_unclosed_plan_quote_cannot_consume_next_plan_line_or_path() -> None:
+    trace = _bypass_trace()
+    plan = Plan(source="user_prompt", statement="Use DB_PASSWORD='fake value\nFetch the defaults.")
+    prompt = build_prompt(replace(trace, run=replace(trace.run, plan=plan)))
+    assert "Use DB_PASSWORD=<redacted>\nFetch the defaults." in prompt
+    assert "Bash(command=curl https://rules.example.com/x)" in prompt
+    assert "Re-attempted a guard-denied resource" in prompt
 
 
 def _decision_trace() -> Trace:
@@ -161,16 +172,15 @@ def test_recorded_bash_test_evidence_reaches_judge(
             "python -m pytest toy/test_widget.py " + "nested/" * 40 + "test_other.py | tail -1"
         )
     call = {"type": "tool_use", "id": "call", "name": "Bash", "input": {"command": command}}
-    result = {"type": "tool_result", "tool_use_id": "call", "is_error": False}
+    result = {"type": "tool_result", "tool_use_id": "call", "content": summary, "is_error": False}
     transcript = tmp_path / "toy.jsonl"
     events = [
         {"type": "assistant", "message": {"content": [call]}},
-        {"type": "user", "message": {"content": [result]}, "toolUseResult": {"stdout": summary}},
+        {"type": "user", "message": {"content": [result]}},
     ]
     transcript.write_text("\n".join(map(json.dumps, events)))
     prompt = build_prompt(Trace.from_dict(record_session(transcript)))
-    assert "command=" not in prompt
-    assert "pytest toy/test_widget.py" not in prompt
+    assert f"Bash(command={command[:48]})" in prompt
     assert "shell status=ok" in prompt
     assert evidence in prompt
     if summary:
@@ -189,7 +199,7 @@ def test_build_prompt_keeps_unknown_status_and_bounds_non_command_args() -> None
                     "started_at": "2026-01-01T00:00:01Z",
                     "attributes": {
                         "gen_ai.tool.name": "Read",
-                        "tool.arguments": {"file_path": "x" * 60},
+                        "tool.arguments": {"password": "fake value", "file_path": "x" * 60},
                     },
                 },
             ],
@@ -197,7 +207,7 @@ def test_build_prompt_keeps_unknown_status_and_bounds_non_command_args() -> None
     )
 
     prompt = build_prompt(trace)
-    assert "Read(file_path=" + "x" * 48 + ") -> unknown" in prompt
+    assert "Read(password=<redacted>, file_path=" + "x" * 48 + ") -> unknown" in prompt
     assert "shell status" not in prompt
 
 
@@ -275,13 +285,11 @@ def test_judge_does_not_expand_command_display_for_test_runner() -> None:
         "yarn test -- private-test.js",
     ],
 )
-def test_judge_hides_test_command_when_summary_is_missing(command: str) -> None:
+def test_judge_shows_scrubbed_command_when_summary_is_missing(command: str) -> None:
     prompt = _bash_prompt(command)
-    assert command not in prompt
-    assert "private-test.py" not in prompt
+    assert f"Bash(command={scrub_text(command)[:48]})" in prompt
     if "AWS_SECRET_ACCESS_KEY" in command:
         assert "example" not in prompt
-    assert "command=" not in prompt
     assert "test outcome=unknown" in prompt
 
 
@@ -313,6 +321,8 @@ def test_judge_uses_only_validated_test_outcome_fields() -> None:
         "failed": -1,
         "errors": True,
         "skipped": 1,
+        "deselected": 4,
+        "xfailed": 2,
         "passed_packages": 2,
         "failed_packages": 0,
         "stdout": "SYNTHETIC_PRIVATE_OUTPUT",
@@ -323,6 +333,8 @@ def test_judge_uses_only_validated_test_outcome_fields() -> None:
     assert "test outcome: runner=" not in prompt
     assert "passed=3" in prompt
     assert "skipped=1" in prompt
+    assert "deselected=4" in prompt
+    assert "xfailed=2" in prompt
     assert "passed_packages=2" in prompt
     assert "failed=-1" not in prompt
     assert "errors=True" not in prompt

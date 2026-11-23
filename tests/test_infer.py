@@ -508,3 +508,15 @@ def test_enrich_adds_inferred_decisions_in_timestamp_order() -> None:
     decisions = enriched.steps_of_kind("decision")
     assert len(decisions) == 1
     assert [s.started_at for s in enriched.steps] == sorted(s.started_at for s in enriched.steps)
+
+
+def test_a_cargo_pass_seen_only_through_tail_does_not_earn_retry_credit() -> None:
+    # `tail` shows the last lines only: an earlier target's failure can be cut off, so a
+    # truncated view may show a failure but never proves a clean retry.
+    command = "cargo test --no-fail-fast | tail -n 1"
+    failed = _tool("t1", "Bash", {"command": command}, "...01", "error")
+    failed["attributes"]["test.outcome"] = {"runner": "cargo test", "failed": 1, "passed": 0}
+    retry = _tool("t3", "Bash", {"command": command}, "...03")
+    retry["attributes"]["test.outcome"] = {"runner": "cargo test", "failed": 0, "passed": 1}
+    trace = _trace([failed, _tool("t2", "Edit", {"file_path": "/repo/src/lib.rs"}, "...02"), retry])
+    assert infer_decisions(trace) == []

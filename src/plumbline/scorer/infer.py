@@ -89,11 +89,22 @@ def _test_counts(step: Step) -> dict[str, int] | None:
     return counts
 
 
+_PER_TARGET_RUNNERS = frozenset({"cargo test", "go test"})
+
+
 def _successful_reverification(step: Step, failed_step: Step) -> bool:
     if step.status != "ok" or step.attributes.get("harness.background_task_pending"):
         return False
     counts = _test_counts(step)
     if counts is None or counts["passed"] == 0:
+        return False
+    # cargo and go print one summary per target or package, so a piped view (`| tail`) can
+    # cut off an earlier target's failure: there it may show a failure but never proves a
+    # clean retry. pytest, unittest, jest and vitest end with one summary for the whole run.
+    if (
+        "|" in _args(step)["command"]
+        and step.attributes["test.outcome"]["runner"] in _PER_TARGET_RUNNERS
+    ):
         return False
     if scrub_text(_args(step)["command"]) != scrub_text(_args(failed_step)["command"]):
         return False

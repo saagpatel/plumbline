@@ -24,24 +24,42 @@ from typing import Any
 _CREDENTIAL = r"(?:password|passwd|token|secret|api[_-]?key|aws_secret_access_key)"
 _ENV_LABEL = rf"(?:[\w]+_)?{_CREDENTIAL}="
 _OPTION = rf"--(?:[\w-]+-)?{_CREDENTIAL}"
-# Shell quoting can split a single argument into adjacent segments, e.g. shlex.quote
-# represents an apostrophe by closing a single quote and opening a double quote.
-_WORD_PART = r"""(?:\\[\s\S]|'[^']*(?:'|\Z)|"(?:\\[\s\S]|[^"\\])*(?:"|\Z)|[^\s\\'";|&()<>])"""
 _ASSIGNMENT_LABEL = rf"(?:{_ENV_LABEL}|{_OPTION}=)"
-# A credential-bearing assignment or long option, followed by one shell word.
-# Quoted and backslash-escaped spaces are part of the same value.
-_CREDENTIAL_VALUE = re.compile(rf"(?i)(?P<label>\b{_ENV_LABEL}|{_OPTION}(?:=|[ \t]+)){_WORD_PART}+")
 
-# Ordered: specific shapes first. Token rules require a real separator after the
-# provider prefix so ordinary words ("skip_...", "patient-...", "pattern_...")
-# are NOT mistaken for secrets.
-_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
-    (re.compile(rf"(?i)('{_ASSIGNMENT_LABEL})[^']*('|\Z){_WORD_PART}*"), r"\1<redacted>\2"),
-    (
-        re.compile(rf'(?i)("{_ASSIGNMENT_LABEL})(?:\\(?:[\s\S]|\Z)|[^"\\])*("|\Z){_WORD_PART}*'),
-        r"\1<redacted>\2",
-    ),
-    (_CREDENTIAL_VALUE, r"\g<label><redacted>"),
+
+def _credential_patterns(*, plan: bool) -> tuple[tuple[re.Pattern[str], str], ...]:
+    single = r"[^']*"
+    double = r'(?:\\[\s\S]|[^"\\])*'
+    end = r"\Z"
+    if plan:
+        # A closing quote can be on a later line. Only an unfinished quote
+        # stops at the newline, preserving the next plan instruction.
+        single = rf"(?:{single}(?=')|[^'\n]*)"
+        double_line = r'(?:\\[^\n]|[^"\\\n])*(?:\\(?=\n|\Z))?'
+        double = rf'(?:{double}(?=")|{double_line})'
+        end = r"(?=\n|\Z)"
+
+    # Shell quoting can split a single argument into adjacent segments.
+    word_part = rf"""(?:\\[\s\S]|'{single}(?:'|{end})|"{double}(?:"|{end})|[^\s\\'";|&()<>])"""
+    label = rf"\b{_ENV_LABEL}|{_OPTION}(?:=|[ \t]+)"
+    return (
+        (
+            re.compile(rf"(?i)('{_ASSIGNMENT_LABEL}){single}('|{end}){word_part}*"),
+            r"\1<redacted>\2",
+        ),
+        (
+            re.compile(rf'(?i)("{_ASSIGNMENT_LABEL}){double}(?:\\(?=\Z))?("|{end}){word_part}*'),
+            r"\1<redacted>\2",
+        ),
+        (re.compile(rf"(?i)({label}){word_part}+"), r"\1<redacted>"),
+    )
+
+
+_CREDENTIAL_PATTERNS = _credential_patterns(plan=False)
+_PLAN_CREDENTIAL_PATTERNS = _credential_patterns(plan=True)
+# Token rules require a real separator after the provider prefix so ordinary
+# words ("skip_...", "patient-...", "pattern_...") are not mistaken for secrets.
+_PATTERNS = (
     (re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"), "<email>"),
     (re.compile(r"\b(?:sk|ghp|gho|ghs|ghu|ghr|xox[baprs])[-_][A-Za-z0-9._-]{16,}"), "<token>"),
     (re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._-]{16,}"), "<token>"),
@@ -50,12 +68,12 @@ _PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
 )
 
 
-def scrub_text(value: str) -> str:
+def scrub_text(value: str, *, plan: bool = False) -> str:
     """Redact high-signal PII shapes from a single string."""
-    out = value
-    for pattern, replacement in _PATTERNS:
-        out = pattern.sub(replacement, out)
-    return out
+    credentials = _PLAN_CREDENTIAL_PATTERNS if plan else _CREDENTIAL_PATTERNS
+    for pattern, replacement in (*credentials, *_PATTERNS):
+        value = pattern.sub(replacement, value)
+    return value
 
 
 def scrub_argument(key: str, value: str) -> str:

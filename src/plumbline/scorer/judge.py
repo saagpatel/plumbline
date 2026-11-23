@@ -206,7 +206,7 @@ def build_prompt(trace: Trace) -> str:
     summary = trace.run.outcome_summary
     outcome_text = f"{status} — {scrub_text(summary)}" if summary else status
     return _PROMPT.format(
-        plan="\n".join(scrub_text(line) for line in plan.split("\n")),
+        plan=scrub_text(plan, plan=True),
         path=path_text,
         decisions=decision_text,
         denies=deny_text,

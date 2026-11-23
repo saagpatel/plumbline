@@ -114,6 +114,30 @@ def test_unclosed_plan_quote_cannot_consume_next_plan_line_or_path() -> None:
     assert "Re-attempted a guard-denied resource" in prompt
 
 
+def test_multiline_plan_credential_is_redacted_as_one_value() -> None:
+    trace = _bypass_trace()
+    plan = Plan(
+        source="user_prompt",
+        statement=(
+            "Use DB_PASSWORD='first line\nPRIVATE_SECOND_LINE' for the request.\n"
+            '--token "option first line\nPRIVATE_OPTION_LINE"\n'
+            'API_KEY="escaped \\"quote\\"\nPRIVATE_ESCAPED_LINE"\n'
+            """env "DB_PASSWORD=fake dog's\nPRIVATE_QUOTED_LINE"\n"""
+            "UNSET_PASSWORD='unclosed PRIVATE_UNCLOSED_LINE\nKeep this instruction."
+        ),
+    )
+    prompt = build_prompt(replace(trace, run=replace(trace.run, plan=plan)))
+
+    assert "PRIVATE_" not in prompt
+    assert (
+        "Use DB_PASSWORD=<redacted> for the request.\n"
+        "--token <redacted>\n"
+        "API_KEY=<redacted>\n"
+        'env "DB_PASSWORD=<redacted>"\n'
+        "UNSET_PASSWORD=<redacted>\nKeep this instruction."
+    ) in prompt
+
+
 def _decision_trace() -> Trace:
     return Trace.from_dict(
         {

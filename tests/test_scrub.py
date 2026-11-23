@@ -1,6 +1,9 @@
 """PII scrubber behavior."""
 
 import json
+import shlex
+
+import pytest
 
 from plumbline.recorders.claude_code import record_session
 from plumbline.scrub import scrub_obj, scrub_text
@@ -41,6 +44,19 @@ def test_scrub_whole_quoted_environment_assignments() -> None:
 
 def test_scrub_assignment_truncated_inside_recorded_summary() -> None:
     assert scrub_text('env "DB_PASSWORD=two fake words') == 'env "DB_PASSWORD=<redacted>'
+
+
+@pytest.mark.parametrize(
+    ("argument", "expected"),
+    [
+        ("'--password=first last'", "'--password=<redacted>'"),
+        ('"--token=a b"', '"--token=<redacted>"'),
+        (shlex.quote("--token=fake dog's token"), "'--token=<redacted>'"),
+        (shlex.quote("DB_PASSWORD=fake dog's password"), "'DB_PASSWORD=<redacted>'"),
+    ],
+)
+def test_scrub_whole_credential_argument(argument: str, expected: str) -> None:
+    assert scrub_text(f"toy {argument} --verbose") == f"toy {expected} --verbose"
 
 
 def test_quoted_environment_assignment_is_scrubbed_from_recorded_trace(tmp_path) -> None:

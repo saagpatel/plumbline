@@ -23,21 +23,24 @@ from typing import Any
 
 _CREDENTIAL = r"(?:password|passwd|token|secret|api[_-]?key|aws_secret_access_key)"
 _ENV_LABEL = rf"(?:[\w]+_)?{_CREDENTIAL}="
+_OPTION = rf"--(?:[\w-]+-)?{_CREDENTIAL}"
+# Shell quoting can split a single argument into adjacent segments, e.g. shlex.quote
+# represents an apostrophe by closing a single quote and opening a double quote.
+_WORD_PART = r"""(?:\\[\s\S]|'[^']*(?:'|\Z)|"(?:\\[\s\S]|[^"\\])*(?:"|\Z)|[^\s\\'";|&()<>])"""
+_ASSIGNMENT_LABEL = rf"(?:{_ENV_LABEL}|{_OPTION}=)"
 # A credential-bearing assignment or long option, followed by one shell word.
 # Quoted and backslash-escaped spaces are part of the same value.
-_CREDENTIAL_VALUE = re.compile(
-    rf"(?i)(?P<label>\b{_ENV_LABEL}|--(?:[\w-]+-)?{_CREDENTIAL}(?:=|[ \t]+))"
-    r"""(?:\\[\s\S]|'[^']*(?:'|$)|"(?:\\[\s\S]|[^"\\])*(?:"|$)|[^\s\\'";|&()<>])+"""
-)
+_CREDENTIAL_VALUE = re.compile(rf"(?i)(?P<label>\b{_ENV_LABEL}|{_OPTION}(?:=|[ \t]+)){_WORD_PART}+")
 
 # Ordered: specific shapes first. Token rules require a real separator after the
 # provider prefix so ordinary words ("skip_...", "patient-...", "pattern_...")
 # are NOT mistaken for secrets.
 _PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
-    # A quote before the variable encloses the entire assignment. A captured
-    # summary can end before the closing quote.
-    (re.compile(rf"(?i)('{_ENV_LABEL})[^']*('|\Z)"), r"\1<redacted>\2"),
-    (re.compile(rf'(?i)("{_ENV_LABEL})(?:\\(?:[\s\S]|\Z)|[^"\\])*("|\Z)'), r"\1<redacted>\2"),
+    (re.compile(rf"(?i)('{_ASSIGNMENT_LABEL})[^']*('|\Z){_WORD_PART}*"), r"\1<redacted>\2"),
+    (
+        re.compile(rf'(?i)("{_ASSIGNMENT_LABEL})(?:\\(?:[\s\S]|\Z)|[^"\\])*("|\Z){_WORD_PART}*'),
+        r"\1<redacted>\2",
+    ),
     (_CREDENTIAL_VALUE, r"\g<label><redacted>"),
     (re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"), "<email>"),
     (re.compile(r"\b(?:sk|ghp|gho|ghs|ghu|ghr|xox[baprs])[-_][A-Za-z0-9._-]{16,}"), "<token>"),
@@ -53,6 +56,13 @@ def scrub_text(value: str) -> str:
     for pattern, replacement in _PATTERNS:
         out = pattern.sub(replacement, out)
     return out
+
+
+def scrub_argument(key: str, value: str) -> str:
+    """A credential-named tool argument carries its label outside its value."""
+    if re.fullmatch(_ASSIGNMENT_LABEL, key + "=", re.IGNORECASE):
+        return "<redacted>"
+    return scrub_text(value)
 
 
 def scrub_obj(value: Any) -> Any:  # noqa: ANN401 - intentionally walks arbitrary JSON

@@ -24,6 +24,8 @@ def _message_problem(record: JsonObj) -> str | None:
     message = record.get("message")
     if not isinstance(message, dict):
         return "message"
+    if not isinstance(message.get("id", ""), str):
+        return "message.id"
     content = message.get("content")
     if isinstance(content, str) and content:
         return None
@@ -50,35 +52,34 @@ def _content_problem(content: list[JsonObj]) -> str | None:
         ):
             return "text"
         if block.get("type") == "tool_use":
-            tool_id = block.get("id")
-            if tool_id is not None and not isinstance(tool_id, str):
-                return "tool_use.id"
+            for field in ("id", "name"):
+                if not isinstance(block.get(field, ""), str):
+                    return f"tool_use.{field}"
             if "input" in block and not isinstance(block["input"], dict):
                 return "input"
-        if block.get("type") == "tool_result":
-            tool_id = block.get("tool_use_id")
-            if tool_id is not None and not isinstance(tool_id, str):
-                return "tool_result.tool_use_id"
+        if block.get("type") == "tool_result" and not isinstance(block.get("tool_use_id", ""), str):
+            return "tool_result.tool_use_id"
     return None
 
 
 def _record_problem(record: JsonObj) -> str | None:
-    if not isinstance(record.get("timestamp", ""), str):
-        return "timestamp"
-    for field in ("uuid", "parentUuid"):
-        identifier = record.get(field)
-        if identifier is not None and not isinstance(identifier, str):
+    for field in ("timestamp", "uuid", "agentId"):
+        if not isinstance(record.get(field, ""), str):
             return field
+    parent = record.get("parentUuid")
+    if parent is not None and not isinstance(parent, str):
+        return "parentUuid"
     kind = record.get("type")
-    if kind == "attachment" or (kind == "system" and record.get("subtype") == "stop_hook_summary"):
-        tool_use_id = record.get("toolUseID")
-        if tool_use_id is not None and not isinstance(tool_use_id, str):
-            return "toolUseID"
+    stop_hook = kind == "system" and record.get("subtype") == "stop_hook_summary"
+    if (kind == "attachment" or stop_hook) and not isinstance(record.get("toolUseID", ""), str):
+        return "toolUseID"
     attachment = record.get("attachment")
-    if kind == "attachment" and isinstance(attachment, dict):
-        tool_use_id = attachment.get("toolUseID")
-        if tool_use_id is not None and not isinstance(tool_use_id, str):
-            return "toolUseID"
+    if (
+        kind == "attachment"
+        and isinstance(attachment, dict)
+        and not isinstance(attachment.get("toolUseID", ""), str)
+    ):
+        return "toolUseID"
     if kind in ("assistant", "user"):
         return _message_problem(record)
     return None

@@ -101,6 +101,18 @@ def test_malformed_records_do_not_use_sniff_limit(tmp_path: Path) -> None:
         (b"42", "record"),
         (b'{"type":"attachment","uuid":["synthetic"]}', "uuid"),
         (
+            b'{"type":"assistant","isSidechain":true,"agentId":[],'
+            b'"message":{"id":"m","content":"synthetic"}}',
+            "agentId",
+        ),
+        (b'{"type":"assistant","agentId":null,"message":{"content":"synthetic"}}', "agentId"),
+        (b'{"type":"assistant","message":{"id":42,"content":"synthetic"}}', "message.id"),
+        (
+            b'{"type":"assistant","message":{"content":[{"type":"tool_use",'
+            b'"name":["synthetic"]}]}}',
+            "tool_use.name",
+        ),
+        (
             b'{"type":"attachment","attachment":{"type":"hook_blocking_error",'
             b'"toolUseID":["synthetic"]}}',
             "tooluseid",
@@ -195,7 +207,7 @@ def test_malformed_lines_preserve_valid_events_and_report_line(
     assert trace["run"]["outcome"]["summary"] == "done"
     assert "test.outcome" not in tools[0]["attributes"]
     diagnostics = capsys.readouterr().err.lower()
-    assert f"record line 2 skipped: {reason}".lower() in diagnostics
+    assert diagnostics == f"record line 2 skipped: {reason}\n".lower()
     assert "synthetic" not in diagnostics
     assert "complete" not in diagnostics
 

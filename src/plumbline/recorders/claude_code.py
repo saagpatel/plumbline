@@ -111,12 +111,12 @@ def record_session(
 
 def _record_steps(  # noqa: C901, PLR0912 - dispatch transcript record types
     events: list[JsonObj], last_ts: str
-) -> tuple[list[JsonObj], dict[str, str]]:
+) -> tuple[list[JsonObj], dict[int, str]]:
     steps: list[JsonObj] = []
     tool_steps: dict[str, IndexedStep] = {}
     pending: list[IndexedStep] = []
     invocations: dict[tuple[str | None, str], JsonObj] = {}
-    record_steps: dict[str, str] = {}
+    record_steps: dict[int, str] = {}
     skipped: Counter[str] = Counter()
     blocking_hooks = _blocking_hooks(events)
     matched_hooks: set[str] = set()
@@ -130,7 +130,7 @@ def _record_steps(  # noqa: C901, PLR0912 - dispatch transcript record types
 
         if etype == "assistant":
             invocation = _record_invocation(ev, _llm_step(ev, sub_id, ts, idx), steps, invocations)
-            record_steps[ev.get("uuid") or invocation["step_id"]] = invocation["step_id"]
+            record_steps[idx] = invocation["step_id"]
             for j, block in enumerate(_content(ev)):
                 if block.get("type") == "tool_use":
                     block_id = block.get("id") or f"ev{idx}_tu{j}"
@@ -154,7 +154,7 @@ def _record_steps(  # noqa: C901, PLR0912 - dispatch transcript record types
                 ):
                     matched_hooks.add(ev["toolUseID"])
                 if ev.get("uuid"):
-                    record_steps[ev["uuid"]] = step["step_id"]
+                    record_steps[idx] = step["step_id"]
             else:
                 skipped["system"] += 1
         elif etype in ("permission-mode", "mode"):
@@ -162,7 +162,7 @@ def _record_steps(  # noqa: C901, PLR0912 - dispatch transcript record types
             step, last_mode = _mode_step(ev, etype, last_mode, mode_seq, ts)
             steps.append(step)
             if ev.get("uuid"):
-                record_steps[ev["uuid"]] = step["step_id"]
+                record_steps[idx] = step["step_id"]
         else:
             label = (
                 scrub_text(etype)
@@ -204,10 +204,12 @@ def _record_invocation(
 
 
 def _resolve_parents(
-    steps: list[JsonObj], events: list[JsonObj], record_steps: dict[str, str]
+    steps: list[JsonObj], events: list[JsonObj], record_steps: dict[int, str]
 ) -> None:
     parents = {ev["uuid"]: ev.get("parentUuid") for ev in events if ev.get("uuid")}
-    resolved: dict[str, str | None] = dict(record_steps)
+    resolved: dict[str, str | None] = {
+        events[idx].get("uuid") or step_id: step_id for idx, step_id in record_steps.items()
+    }
     for step in steps:
         parent = step.get("parent_step_id")
         visited: set[str] = set()
@@ -323,7 +325,7 @@ def _merge_result(
     else:
         step["status"] = "ok"
     step["ended_at"] = ev.get("timestamp")
-    if step["attributes"].get("gen_ai.tool.name") in {"Bash", "Read", "TaskOutput"}:
+    if step["attributes"].get("gen_ai.tool.name") in {"Bash", "TaskOutput"}:
         _merge_output(call, result, _result_output(result, block, ev.get("toolUseResult")), pending)
     if step["kind"] == "agent" and result.get("agentId"):
         step["attributes"]["agent.spawns_subagent_id"] = result["agentId"]
@@ -337,17 +339,17 @@ def _merge_output(
     call: IndexedStep, result: JsonObj, output: str, pending: list[IndexedStep]
 ) -> None:
     call_index, step = call
-    is_bash = step["attributes"]["gen_ai.tool.name"] == "Bash"
-    if is_bash and mark_pending(step, result, output):
-        pending.append(call)
-        return
-    if step["status"] == "ok":
+    if step["attributes"]["gen_ai.tool.name"] == "TaskOutput":
         for index, (launch_index, launch) in enumerate(pending):
             if launch_index < call_index and resolve_from_output(launch, step, result, output):
                 pending.pop(index)
-                return
+                break
+        return
+    if mark_pending(step, result, output):
+        pending.append(call)
+        return
     command = _as_dict(step["attributes"]["tool.arguments"]).get("command")
-    if is_bash and (outcome := parse_test_outcome(output, command=command)):
+    if outcome := parse_test_outcome(output, command=command):
         step["attributes"]["test.outcome"] = outcome
 
 
@@ -382,16 +384,19 @@ def _system_step(
         step["attributes"] = attrs
         return step
 
-    if ev.get("hookInfos") or ev.get("preventedContinuation") is not None or ev.get("hookErrors"):
+    blocking = (
+        blocking_hooks.get(ev.get("toolUseID", ""), {}) if subtype == "stop_hook_summary" else {}
+    )
+    if (
+        blocking
+        or ev.get("hookInfos")
+        or ev.get("preventedContinuation") is not None
+        or ev.get("hookErrors")
+    ):
         infos = ev.get("hookInfos") or []
         info = (
             _as_dict(infos[0])
             if infos and (len(infos) == 1 or subtype != "stop_hook_summary")
-            else {}
-        )
-        blocking = (
-            blocking_hooks.get(ev.get("toolUseID", ""), {})
-            if subtype == "stop_hook_summary"
             else {}
         )
         prevented = bool(ev.get("preventedContinuation"))
@@ -411,7 +416,8 @@ def _system_step(
                 {
                     k: v
                     for k, v in _as_dict(entry).items()
-                    if k in {"name", "event", "hookName", "hookEvent", "command", "durationMs"}
+                    if k in {"name", "event", "hookName", "hookEvent", "outcome"}
+                    and isinstance(v, str)
                 }
                 for entry in infos
             ]
@@ -476,7 +482,7 @@ def _classify_text_decision(text: str) -> tuple[str, str] | None:
     return None
 
 
-def _text_decision_steps(events: list[JsonObj], record_steps: dict[str, str]) -> list[JsonObj]:
+def _text_decision_steps(events: list[JsonObj], record_steps: dict[int, str]) -> list[JsonObj]:
     """Phase 4d: decision steps inferred from assistant prose (opt-in, best-effort)."""
     steps: list[JsonObj] = []
     for idx, ev in enumerate(events):
@@ -489,7 +495,7 @@ def _text_decision_steps(events: list[JsonObj], record_steps: dict[str, str]) ->
         if found is None:
             continue
         kind, snippet = found
-        uuid = record_steps.get(ev.get("uuid", ""))
+        invocation_id = record_steps[idx]
         steps.append(
             {
                 "step_id": f"textdec_{idx}",
@@ -497,13 +503,13 @@ def _text_decision_steps(events: list[JsonObj], record_steps: dict[str, str]) ->
                 "subagent_id": ev.get("agentId") if ev.get("isSidechain") else None,
                 "kind": "decision",
                 "started_at": ev.get("timestamp") or _EPOCH,
-                "caused_by": uuid,
+                "caused_by": invocation_id,
                 "attributes": {
                     "agent.decision.kind": kind,
                     "agent.decision.rationale": f"(inferred from agent text) {snippet}",
                     "agent.decision.inferred": True,
                     "agent.decision.source": "text_signal",
-                    "agent.decision.evidence": [uuid] if uuid else [],
+                    "agent.decision.evidence": [invocation_id],
                 },
             }
         )

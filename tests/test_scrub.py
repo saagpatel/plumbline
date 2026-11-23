@@ -23,6 +23,11 @@ def test_scrub_prefixed_token() -> None:
     assert "sk-ABCD1234EFGH5678IJKL" not in scrub_text("token sk-ABCD1234EFGH5678IJKL")
 
 
+def test_short_command_preview_scrubs_aws_secret_assignment() -> None:
+    command = "AWS_SECRET_ACCESS_KEY=example echo toy"
+    assert scrub_text(command) == "AWS_SECRET_ACCESS_KEY=<redacted> echo toy"
+
+
 def test_scrub_keeps_ordinary_identifiers() -> None:
     # Must NOT over-redact: these look prefix-ish but are not secrets.
     text = "skip_empty_lines patient-monitoring pattern_match_score ghost_mode"
@@ -51,7 +56,8 @@ def test_hook_command_credentials_are_scrubbed_from_default_trace(tmp_path) -> N
                 {
                     "name": "toy-hook",
                     "event": "Stop",
-                    "command": "EXAMPLE_PASSWORD=not-a-secret toy",
+                    "outcome": "blocked",
+                    "command": "EXAMPLE_PASSWORD=not-a-secret AWS_SECRET_ACCESS_KEY=example toy",
                 }
             ],
         },
@@ -59,5 +65,6 @@ def test_hook_command_credentials_are_scrubbed_from_default_trace(tmp_path) -> N
     path.write_text("\n".join(map(json.dumps, events)))
     trace = record_session(path)
     assert "not-a-secret" not in json.dumps(trace)
+    assert "AWS_SECRET_ACCESS_KEY=example" not in json.dumps(trace)
     (entry,) = trace["steps"][0]["attributes"]["harness.hook.entries"]
-    assert (entry["name"], entry["event"]) == ("toy-hook", "Stop")
+    assert entry == {"name": "toy-hook", "event": "Stop", "outcome": "blocked"}

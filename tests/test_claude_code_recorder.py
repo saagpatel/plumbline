@@ -411,6 +411,19 @@ def test_api_error_message_has_error_status(tmp_path: Path) -> None:
     assert trace["steps"][0]["status"] == "error"
 
 
+def test_text_decision_on_uuidless_fragment_names_invocation(tmp_path: Path) -> None:
+    trace = _record(
+        tmp_path,
+        _turn("first", id="reply", content="Starting."),
+        {"type": "assistant", "message": {"id": "reply", "content": "Could you clarify?"}},
+        infer_text_decisions=True,
+    )
+    (invocation,) = steps_of_kind(trace, "llm")
+    (decision,) = steps_of_kind(trace, "decision")
+    assert decision["caused_by"] == invocation["step_id"]
+    assert decision["attributes"]["agent.decision.evidence"] == [invocation["step_id"]]
+
+
 @pytest.mark.parametrize("split", [False, True])
 @pytest.mark.parametrize("with_uuid", [False, True])
 def test_calls_belong_to_the_invocation_across_fragments(tmp_path: Path, split, with_uuid) -> None:
@@ -490,11 +503,34 @@ def test_hook_summary_keeps_entries_and_joins_blocking_identity(tmp_path: Path, 
     assert attrs["harness.hook.name"] == "toy-gate"
     assert attrs["harness.hook.event"] == "Stop"
     assert attrs["harness.hook.verdict"] == "deny"
-    assert attrs["harness.hook.entries"] == infos
+    assert attrs["harness.hook.entries"] == [infos[0], {}, infos[2]]
     assert capsys.readouterr().err.splitlines() == ["skipped attachment: 1"]
 
 
-@pytest.mark.parametrize("retry_result", ["missing", "pending", "failed"])
+def test_blocking_attachment_identifies_hook_without_summary_infos(tmp_path: Path, capsys) -> None:
+    trace = _record(
+        tmp_path,
+        _turn("one", content="start"),
+        {"type": "system", "subtype": "stop_hook_summary", "toolUseID": "gate-call"},
+        {
+            "type": "attachment",
+            "toolUseID": "gate-call",
+            "attachment": {
+                "type": "hook_blocking_error",
+                "hookName": "toy-gate",
+                "hookEvent": "Stop",
+            },
+        },
+    )
+    (hook,) = steps_of_kind(trace, "hook")
+    assert hook["attributes"]["harness.hook.name"] == "toy-gate"
+    assert hook["attributes"]["harness.hook.event"] == "Stop"
+    assert hook["attributes"]["harness.hook.verdict"] == "deny"
+    assert hook["attributes"]["harness.hook.target_step_id"] == "gate-call"
+    assert capsys.readouterr().err == ""
+
+
+@pytest.mark.parametrize("retry_result", ["missing", "pending", "log_only", "failed"])
 def test_unverified_retry_after_edit_gets_no_credit(tmp_path: Path, retry_result: str) -> None:
     def call(uid: str, tool: str, **args) -> dict:
         return _turn(
@@ -514,9 +550,13 @@ def test_unverified_retry_after_edit_gets_no_credit(tmp_path: Path, retry_result
     ]
     if retry_result != "missing":
         records.append(result("retry", backgroundTaskId="toy-task", outputPath="toy.log"))
-    if retry_result == "failed":
+    if retry_result in {"log_only", "failed"}:
         records.extend(
             [call("read", "Read", file_path="toy.log"), result("read", stdout="1 failed in 0.01s")]
+        )
+    if retry_result == "failed":
+        records.extend(
+            [call("poll", "TaskOutput", task_id="toy-task"), result("poll", task={"exitCode": 1})]
         )
     records.extend([call("unrelated", "Bash", command="echo toy"), result("unrelated")])
     trace = Trace.from_dict(_record(tmp_path, *records))

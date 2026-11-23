@@ -12,7 +12,7 @@ overlay. The Python package supports Python 3.11 and newer and has zero runtime 
 
 # Setup
 
-Use the Python version in `.python-version` and the repository's pinned uv requirement. From the
+Use the Python version in `.python-version` and uv 0.13.9 or a later 0.13.x. From the
 repository root, install the committed development lock:
 
 ```sh

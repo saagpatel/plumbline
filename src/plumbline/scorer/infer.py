@@ -22,6 +22,7 @@ and a human can weight it as derived, not observed.
 
 from __future__ import annotations
 
+import re
 from dataclasses import replace
 from datetime import datetime
 from typing import TYPE_CHECKING
@@ -29,6 +30,7 @@ from typing import TYPE_CHECKING
 from plumbline.recorders.test_outcome import command_runners
 from plumbline.scorer.bypass import detect_bypass, resource_tokens
 from plumbline.scorer.trace import Step
+from plumbline.scrub import scrub_text
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -68,9 +70,15 @@ def _test_counts(step: Step) -> dict[str, int] | None:
         step.kind != "tool_call"
         or _tool_name(step) != "Bash"
         or not isinstance(outcome, dict)
-        or outcome.get("runner") not in command_runners(_args(step).get("command"))
         or "failed" not in outcome
     ):
+        return None
+    command = _args(step).get("command")
+    if not isinstance(command, str):
+        return None
+    # Ignore the recorder's angle brackets when checking for shell redirects.
+    literal = re.sub(r"<(?:redacted|email|token|hex)>", "_", command)
+    if outcome.get("runner") not in command_runners(literal):
         return None
     counts: dict[str, int] = {}
     for key in _OUTCOME_COUNT_KEYS:
@@ -82,14 +90,12 @@ def _test_counts(step: Step) -> dict[str, int] | None:
 
 
 def _successful_reverification(step: Step, failed_step: Step) -> bool:
-    if (
-        step.status != "ok"
-        or step.attributes.get("harness.background_task_pending")
-        or _args(step).get("command") != _args(failed_step).get("command")
-    ):
+    if step.status != "ok" or step.attributes.get("harness.background_task_pending"):
         return False
     counts = _test_counts(step)
     if counts is None or counts["passed"] == 0:
+        return False
+    if scrub_text(_args(step)["command"]) != scrub_text(_args(failed_step)["command"]):
         return False
     if (
         step.attributes["test.outcome"]["runner"]

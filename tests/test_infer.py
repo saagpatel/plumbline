@@ -11,6 +11,7 @@ import pytest
 from plumbline.recorders.test_outcome import parse_test_outcome
 from plumbline.scorer.infer import enrich, infer_decisions
 from plumbline.scorer.trace import Trace
+from plumbline.scrub import scrub_text
 
 
 def _trace(steps: list[dict]) -> Trace:
@@ -142,6 +143,22 @@ def test_shell_failure_without_test_outcome_does_not_earn_retry_credit() -> None
     )
 
     assert infer_decisions(trace) == []
+
+
+@pytest.mark.parametrize("scrubbed", [False, True])
+@pytest.mark.parametrize(("target", "credited"), [("toy", True), ("other", False)])
+def test_retry_credit_ignores_only_scrubbed_values(scrubbed, target, credited) -> None:
+    failed = _pytest_call("failed", "...01", failed=1, status="error")
+    retry = _pytest_call("retry", "...03", passed=1)
+    for step, command in (
+        (failed, "pytest toy --token=fake-first"),
+        (retry, f"pytest {target} --token=fake-second"),
+    ):
+        step["attributes"]["tool.arguments"]["command"] = (
+            scrub_text(command) if scrubbed else command
+        )
+    trace = _trace([failed, _tool("edit", "Edit", {}, "...02"), retry])
+    assert bool(infer_decisions(trace)) is credited
 
 
 def test_multiple_errors_before_one_fix_yield_one_reroute() -> None:

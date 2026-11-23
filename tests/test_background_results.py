@@ -26,7 +26,22 @@ def _result(uid: str, data: dict, text: str, *, error: bool = False) -> dict:
     [
         (None, {}, {}, "", False, None),
         ("TaskOutput", {"task_id": _ID}, {}, "Process exited with code 0", False, "ok"),
-        ("Read", {"file_path": _PATH}, {}, "1 passed in 0.1s", False, "ok"),
+        ("TaskOutput", {"task_id": _ID}, {"task": {"status": "completed"}}, "", False, "ok"),
+        (
+            "TaskOutput",
+            {"task_id": _ID},
+            {"task": {"status": "completed", "exitCode": 1}},
+            "",
+            False,
+            "error",
+        ),
+        ("TaskOutput", {"task_id": _ID}, {}, "1 passed in 0.1s", False, None),
+        ("TaskOutput", {"task_id": _ID}, {}, "TaskOutput failed unexpectedly", True, None),
+        ("TaskOutput", {"task_id": _ID}, {"task": {"status": "failed"}}, "", True, "error"),
+        ("TaskOutput", {"task_id": _ID}, {"task_id": _ID, "exitCode": 0}, "", False, "ok"),
+        ("TaskOutput", {"task_id": _ID}, {"task_id": "other", "exitCode": 0}, "", False, None),
+        ("TaskOutput", {"task_id": _ID}, {}, "Process exited with code 0", True, None),
+        ("Read", {"file_path": _PATH}, {}, "1 passed in 0.1s", False, None),
         (
             "Read",
             {"file_path": _PATH},
@@ -43,7 +58,7 @@ def _result(uid: str, data: dict, text: str, *, error: bool = False) -> dict:
             False,
             None,
         ),
-        ("Read", {"file_path": _PATH}, {}, "Process exited with code 1", False, "error"),
+        ("Read", {"file_path": _PATH}, {}, "Process exited with code 1", False, None),
         ("Read", {"file_path": _PATH + ".old"}, {}, "Process exited with code 0", False, None),
         ("TaskOutput", {"task_id": _ID + "2"}, {}, "Process exited with code 0", False, None),
         (
@@ -81,7 +96,7 @@ def _result(uid: str, data: dict, text: str, *, error: bool = False) -> dict:
             None,
         ),
         ("Bash", {"command": f"cat {_PATH} 2"}, {}, "Process exited with code 0", False, None),
-        ("Bash", {"command": f"tail -1 '{_PATH}'"}, {}, "1 failed in 0.1s", False, "error"),
+        ("Bash", {"command": f"tail -1 '{_PATH}'"}, {}, "1 failed in 0.1s", False, None),
     ],
 )
 def test_only_matching_terminal_output_resolves_launch(tmp_path, case) -> None:
@@ -168,11 +183,12 @@ def test_intermediate_log_summary_does_not_resolve_launch(tmp_path) -> None:
 @pytest.mark.parametrize(
     ("command", "output"),
     [
+        ("make check", "1 passed in 0.1s"),
         ("pytest unit; pytest integration", "1 passed in 0.1s"),
         ("pytest unit", "1 passed in 0.1s\nmore work in 0.1s"),
     ],
 )
-def test_live_log_must_show_the_launch_is_finished(tmp_path, command, output) -> None:
+def test_log_output_never_settles_the_launch(tmp_path, command, output) -> None:
     records = [
         _call("launch", "Bash", {"command": command}),
         _result(

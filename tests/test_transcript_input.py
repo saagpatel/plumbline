@@ -111,6 +111,19 @@ def test_malformed_records_do_not_use_sniff_limit(tmp_path: Path) -> None:
             "tool_use.id",
         ),
         (
+            b'{"type":"user","toolUseResult":{"stdout":"1 failed in 0.1s"},'
+            b'"message":{"content":[{"type":"tool_result","tool_use_id":["t1"]}]}}',
+            "tool_result.tool_use_id",
+        ),
+        (b'{"type":"system","subtype":"stop_hook_summary","toolUseID":["synthetic"]}', "toolUseID"),
+        (b'{"type":"user","timestamp":null,"message":{"content":"bad plan"}}', "timestamp"),
+        (b'{"type":"user","timestamp":17,"message":{"content":"bad plan"}}', "timestamp"),
+        (
+            b'{"type":"assistant","timestamp":17,"message":{"content":"bad outcome",'
+            b'"stop_reason":"end_turn"}}',
+            "timestamp",
+        ),
+        (
             b'{"type":"assistant","message":{"content":[{"type":"tool_use",'
             b'"name":"Agent","input":["synthetic"]}]}}',
             "input",
@@ -141,7 +154,11 @@ def test_malformed_lines_preserve_valid_events_and_report_line(
         "type": "assistant",
         "uuid": "a1",
         "timestamp": "2026-01-01T00:00:00Z",
-        "message": {"content": [{"type": "tool_use", "id": "t1", "name": "Bash", "input": {}}]},
+        "message": {
+            "content": [
+                {"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "pytest toy"}}
+            ]
+        },
     }
     result = {
         "type": "user",
@@ -174,8 +191,11 @@ def test_malformed_lines_preserve_valid_events_and_report_line(
     assert len(tools) == 1
     assert tools[0]["status"] == "ok"
     assert len([step for step in trace["steps"] if step["kind"] == "llm"]) == 2
+    assert "plan" not in trace["run"]
+    assert trace["run"]["outcome"]["summary"] == "done"
+    assert "test.outcome" not in tools[0]["attributes"]
     diagnostics = capsys.readouterr().err.lower()
-    assert f"line 2 skipped: {reason}" in diagnostics
+    assert f"record line 2 skipped: {reason}".lower() in diagnostics
     assert "synthetic" not in diagnostics
     assert "complete" not in diagnostics
 

@@ -78,7 +78,7 @@ def test_footer_must_match_the_runner_in_the_command() -> None:
 
 def test_runner_command_not_found_invalidates_other_summary_for_that_runner() -> None:
     output = "Tests: 1 passed, 1 total\nsh: jest: command not found"
-    assert parse_test_outcome(output, command="jest; jest --runInBand") is None
+    assert parse_test_outcome(output, command="jest") is None
 
 
 def test_quoted_shell_separator_does_not_start_a_runner_command() -> None:
@@ -95,6 +95,9 @@ def test_quoted_shell_separator_does_not_start_a_runner_command() -> None:
         "false || pytest unit",
         "pytest unit &",
         "pytest unit | cat",
+        "pytest unit | head",
+        "pytest unit | head -n 2",
+        "poetry run pytest toy 2>&1 | head -n 4",
         "pytest unit | tail -1 saved-summary",
         "pytest unit | head < saved-summary",
         "pytest unit | tail -1 | cat",
@@ -113,7 +116,7 @@ def test_other_shell_stages_preclude_outcome(tmp_path, command: str) -> None:
         "uv run pytest",
         "uv run --frozen pytest tests/test_toy.py | tail -1",
         "python -m pytest toy 2>&1",
-        "poetry run pytest toy 2>&1 | head -n 4",
+        "poetry run pytest toy 2>&1 | tail -n 4",
     ],
 )
 def test_pytest_launchers_record_a_single_filtered_summary(tmp_path, command: str) -> None:

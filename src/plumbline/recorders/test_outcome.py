@@ -231,7 +231,7 @@ def command_runners(command: str | None) -> tuple[str, ...]:
         return ()
     runner, pipe, output_filter = literal.partition("|")
     if pipe and not re.fullmatch(
-        r"(?:tail|head)(?:[ \t]+(?:-\d+|-[nc][ \t]*[+-]?\d+|--(?:lines|bytes)=[+-]?\d+))?",
+        r"tail(?:[ \t]+(?:-\d+|-[nc][ \t]*[+-]?\d+|--(?:lines|bytes)=[+-]?\d+))?",
         output_filter.strip(" \t"),
     ):
         return ()

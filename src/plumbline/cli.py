@@ -10,6 +10,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 from plumbline.recorders.claude_code import record_session
+from plumbline.recorders.transcript_input import UnsupportedTranscriptFormatError
 from plumbline.scorer.case import Case
 from plumbline.scorer.judge import AnthropicBackend, OllamaBackend, judge_run
 from plumbline.scorer.score import score
@@ -70,11 +71,15 @@ def _validate(trace: dict, schema_arg: str | None) -> int:
 
 
 def _cmd_record(args: argparse.Namespace) -> int:
-    trace = record_session(
-        Path(args.input),
-        scrub=not args.no_scrub,
-        infer_text_decisions=args.infer_text_decisions,
-    )
+    try:
+        trace = record_session(
+            Path(args.input),
+            scrub=not args.no_scrub,
+            infer_text_decisions=args.infer_text_decisions,
+        )
+    except UnsupportedTranscriptFormatError as exc:
+        sys.stderr.write(f"{exc}\n")
+        return 1
     rendered = json.dumps(trace, indent=2)
     if args.output:
         Path(args.output).write_text(rendered + "\n")

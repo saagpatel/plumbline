@@ -4,10 +4,12 @@ Tested with a fake backend (no model, no network) so the interface and the
 trace-grounding are pinned without the optional Anthropic dependency.
 """
 
+import json
 from pathlib import Path
 
 import pytest
 
+from plumbline.recorders.claude_code import record_session
 from plumbline.scorer.judge import (
     JudgeVerdict,
     OllamaBackend,
@@ -123,6 +125,58 @@ def test_build_prompt_includes_outcome_summary() -> None:
     # against the realized path, so it must reach the judge.
     prompt = build_prompt(_decision_trace())
     assert "Asked operator: per-user or global?" in prompt
+
+
+@pytest.mark.parametrize(
+    ("summary", "evidence"),
+    [
+        ("1 passed in 0.01s", "passed=1"),
+        ("4 passed, 1 failed in 0.01s", "failed=1"),
+        ("", "test outcome=unknown (no runner summary observed)"),
+    ],
+)
+def test_recorded_bash_test_evidence_reaches_judge(
+    tmp_path: Path, summary: str, evidence: str
+) -> None:
+    command = "false && pytest toy; true"
+    if summary:
+        command = "echo " + "x" * 260 + "; python -m pytest toy/test_widget.py | tail -1"
+    call = {"type": "tool_use", "id": "call", "name": "Bash", "input": {"command": command}}
+    result = {"type": "tool_result", "tool_use_id": "call", "is_error": False}
+    transcript = tmp_path / "toy.jsonl"
+    events = [
+        {"type": "assistant", "message": {"content": [call]}},
+        {"type": "user", "message": {"content": [result]}, "toolUseResult": {"stdout": summary}},
+    ]
+    transcript.write_text("\n".join(map(json.dumps, events)))
+    prompt = build_prompt(Trace.from_dict(record_session(transcript)))
+    assert ("pytest toy/test_widget.py" if summary else command) in prompt
+    assert "shell status=ok" in prompt
+    assert evidence in prompt
+
+
+def test_build_prompt_keeps_unknown_status_and_bounds_non_command_args() -> None:
+    trace = Trace.from_dict(
+        {
+            "plumbline_version": "0.1.0",
+            "run": {"run_id": "r", "harness": {"name": "x"}, "started_at": "2026-01-01T00:00:00Z"},
+            "steps": [
+                {
+                    "step_id": "t1",
+                    "kind": "tool_call",
+                    "started_at": "2026-01-01T00:00:01Z",
+                    "attributes": {
+                        "gen_ai.tool.name": "Read",
+                        "tool.arguments": {"file_path": "x" * 60},
+                    },
+                },
+            ],
+        }
+    )
+
+    prompt = build_prompt(trace)
+    assert "Read(file_path=" + "x" * 48 + ") -> unknown" in prompt
+    assert "shell status" not in prompt
 
 
 def test_parse_verdict_clean_json() -> None:

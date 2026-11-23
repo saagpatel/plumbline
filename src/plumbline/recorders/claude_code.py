@@ -15,11 +15,15 @@ Real transcripts vary in shape; the recorder is defensive about it (see
 
 from __future__ import annotations
 
-import json
 import re
+import sys
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
+from plumbline.recorders.background import mark_pending, resolve_from_output
+from plumbline.recorders.test_outcome import parse_test_outcome
+from plumbline.recorders.transcript_input import UnsupportedTranscriptFormatError, load_jsonl
 from plumbline.scrub import scrub_obj
 
 PLUMBLINE_VERSION = "0.1.0"
@@ -61,6 +65,7 @@ _RESULT_KIND = {
 }
 
 JsonObj = dict[str, Any]
+IndexedStep = tuple[int, JsonObj]
 
 
 def _as_dict(value: Any) -> JsonObj:  # noqa: ANN401 - CC fields are sometimes str, sometimes object
@@ -68,23 +73,12 @@ def _as_dict(value: Any) -> JsonObj:  # noqa: ANN401 - CC fields are sometimes s
     return value if isinstance(value, dict) else {}
 
 
-def load_jsonl(path: Path) -> list[JsonObj]:
-    """Parse a JSONL transcript into a list of events (streamed line by line)."""
-    events: list[JsonObj] = []
-    with path.open(encoding="utf-8") as handle:
-        for raw in handle:
-            stripped = raw.strip()
-            if stripped:
-                events.append(json.loads(stripped))
-    return events
-
-
 def _subagent_files(main_path: Path) -> list[Path]:
     sub_dir = main_path.with_suffix("") / "subagents"
     return sorted(sub_dir.glob("*.jsonl")) if sub_dir.is_dir() else []
 
 
-def record_session(  # noqa: C901, PLR0912 - linear event dispatcher; clearer flat than split
+def record_session(
     main_path: Path | str, *, scrub: bool = True, infer_text_decisions: bool = False
 ) -> JsonObj:
     """Normalize a Claude Code session (main + subagents) into a Plumbline trace.
@@ -99,53 +93,142 @@ def record_session(  # noqa: C901, PLR0912 - linear event dispatcher; clearer fl
     main_path = Path(main_path)
     events = load_jsonl(main_path)
     for sub_file in _subagent_files(main_path):
-        events.extend(load_jsonl(sub_file))
+        try:
+            events.extend(load_jsonl(sub_file))
+        except UnsupportedTranscriptFormatError:
+            sys.stderr.write("warning: skipped unsupported sidechain\n")
 
     run = _build_run(events)
-    steps: list[JsonObj] = []
-    tool_steps: dict[str, JsonObj] = {}
-    last_ts = run["started_at"]
-    last_mode: str | None = None
-    mode_seq = 0
-
-    for idx, ev in enumerate(events):
-        ts = ev.get("timestamp") or last_ts
-        if ev.get("timestamp"):
-            last_ts = ev["timestamp"]
-        sub_id = ev.get("agentId") if ev.get("isSidechain") else None
-        etype = ev.get("type")
-
-        if etype == "assistant":
-            steps.append(_llm_step(ev, sub_id, ts, idx))
-            for j, block in enumerate(_content(ev)):
-                if block.get("type") == "tool_use":
-                    block_id = block.get("id") or f"ev{idx}_tu{j}"
-                    step = _tool_step(ev, block, sub_id, ts, block_id)
-                    steps.append(step)
-                    if block.get("id"):
-                        tool_steps[block["id"]] = step
-        elif etype == "user":
-            for block in _content(ev):
-                if block.get("type") == "tool_result":
-                    _merge_result(tool_steps, block, ev)
-        elif etype == "system":
-            if step := _system_step(ev, sub_id, ts, idx):
-                steps.append(step)
-        elif etype in ("permission-mode", "mode"):
-            mode_seq += 1
-            step, last_mode = _mode_step(ev, etype, last_mode, mode_seq, ts)
-            steps.append(step)
-
+    steps, record_steps = _record_steps(events, run["started_at"])
     if infer_text_decisions:
-        steps.extend(_text_decision_steps(events))
-
+        steps.extend(_text_decision_steps(events, record_steps))
+    _resolve_parents(steps, events, record_steps)
     # Stable sort: equal timestamps keep insertion (≈ event) order.
     steps.sort(key=lambda s: s["started_at"])
     trace: JsonObj = {"plumbline_version": PLUMBLINE_VERSION, "run": run, "steps": steps}
     return scrub_obj(trace) if scrub else trace
 
 
+def _record_steps(  # noqa: C901, PLR0912 - dispatch transcript record types
+    events: list[JsonObj], last_ts: str
+) -> tuple[list[JsonObj], dict[str, str]]:
+    steps: list[JsonObj] = []
+    tool_steps: dict[str, IndexedStep] = {}
+    pending: list[IndexedStep] = []
+    invocations: dict[tuple[str | None, str], JsonObj] = {}
+    record_steps: dict[str, str] = {}
+    skipped: Counter[str] = Counter()
+    blocking_hooks = _blocking_hooks(events)
+    matched_hooks: set[str] = set()
+    last_mode: str | None = None
+    mode_seq = 0
+
+    for idx, ev in enumerate(events):
+        ts = last_ts = ev.get("timestamp") or last_ts
+        sub_id = ev.get("agentId") if ev.get("isSidechain") else None
+        etype = ev.get("type")
+
+        if etype == "assistant":
+            invocation = _record_invocation(ev, _llm_step(ev, sub_id, ts, idx), steps, invocations)
+            if ev.get("uuid"):
+                record_steps[ev["uuid"]] = invocation["step_id"]
+            for j, block in enumerate(_content(ev)):
+                if block.get("type") == "tool_use":
+                    block_id = block.get("id") or f"ev{idx}_tu{j}"
+                    step = _tool_step(ev, block, sub_id, ts, block_id)
+                    steps.append(step)
+                    if block.get("id"):
+                        tool_steps[block["id"]] = (idx, step)
+        elif etype == "user":
+            for block in _content(ev):
+                if block.get("type") == "tool_result":
+                    _merge_result(tool_steps, block, ev, pending)
+        elif etype == "system":
+            if ev.get("subtype") == "api_error":
+                skipped["system.api_error"] += 1
+            elif step := _system_step(ev, sub_id, ts, idx, blocking_hooks):
+                steps.append(step)
+                if (
+                    ev.get("subtype") == "stop_hook_summary"
+                    and ev.get("toolUseID") in blocking_hooks
+                ):
+                    matched_hooks.add(ev["toolUseID"])
+                if ev.get("uuid"):
+                    record_steps[ev["uuid"]] = step["step_id"]
+            else:
+                skipped["system"] += 1
+        elif etype in ("permission-mode", "mode"):
+            mode_seq += 1
+            step, last_mode = _mode_step(ev, etype, last_mode, mode_seq, ts)
+            steps.append(step)
+            if ev.get("uuid"):
+                record_steps[ev["uuid"]] = step["step_id"]
+        else:
+            label = (
+                etype
+                if isinstance(etype, str) and re.fullmatch(r"[\w.-]{1,80}", etype)
+                else "unknown"
+            )
+            skipped[label] += 1
+
+    skipped["attachment"] -= len(matched_hooks)
+    for label, count in sorted((+skipped).items()):
+        prefix = "warning: " if label in {"system.api_error", "data-flow-incomplete"} else ""
+        sys.stderr.write(f"{prefix}skipped {label}: {count}\n")
+
+    return steps, record_steps
+
+
 # --- builders ---------------------------------------------------------------
+
+
+def _record_invocation(
+    ev: JsonObj,
+    llm: JsonObj,
+    steps: list[JsonObj],
+    invocations: dict[tuple[str | None, str], JsonObj],
+) -> JsonObj:
+    message_id = ev["message"].get("id")
+    if isinstance(message_id, str) and message_id:
+        key = (llm["subagent_id"], message_id)
+        if existing := invocations.get(key):
+            existing["attributes"].update(llm["attributes"])
+            if llm["ended_at"]:
+                existing["ended_at"] = llm["ended_at"]
+            if llm["status"] == "error":
+                existing["status"] = "error"
+            return existing
+        invocations[key] = llm
+    steps.append(llm)
+    return llm
+
+
+def _resolve_parents(
+    steps: list[JsonObj], events: list[JsonObj], record_steps: dict[str, str]
+) -> None:
+    parents = {ev["uuid"]: ev.get("parentUuid") for ev in events if ev.get("uuid")}
+    resolved: dict[str, str | None] = dict(record_steps)
+    for step in steps:
+        parent = step.get("parent_step_id")
+        visited: set[str] = set()
+        while parent and parent not in resolved and parent not in visited:
+            visited.add(parent)
+            parent = parents.get(parent)
+        ancestor = resolved.get(parent)
+        for uid in visited:
+            resolved[uid] = ancestor
+        step["parent_step_id"] = ancestor if ancestor != step["step_id"] else None
+
+
+def _blocking_hooks(events: list[JsonObj]) -> dict[str, JsonObj]:
+    hooks = {}
+    for ev in events:
+        if ev.get("type") == "attachment":
+            attachment = _as_dict(ev.get("attachment"))
+            task_id = attachment.get("toolUseID") or ev.get("toolUseID")
+            if attachment.get("type") == "hook_blocking_error" and task_id:
+                hooks[task_id] = attachment
+    return hooks
 
 
 def _content(ev: JsonObj) -> list[JsonObj]:
@@ -196,7 +279,7 @@ def _llm_step(ev: JsonObj, sub_id: str | None, ts: str, idx: int) -> JsonObj:
         attrs["agent.reasoning"] = True
     step = _base_step(ev.get("uuid") or f"ev{idx}", "llm", ev, sub_id, ts)
     step["ended_at"] = ev.get("timestamp")
-    step["status"] = "ok"
+    step["status"] = "error" if ev.get("isApiErrorMessage") is True else "ok"
     step["attributes"] = attrs
     return step
 
@@ -220,15 +303,18 @@ def _tool_step(ev: JsonObj, block: JsonObj, sub_id: str | None, ts: str, block_i
         }
         kind = "tool_call"
     step = _base_step(block_id, kind, ev, sub_id, ts)
-    step["status"] = "ok"
+    step["status"] = None
     step["attributes"] = attrs
     return step
 
 
-def _merge_result(tool_steps: dict[str, JsonObj], block: JsonObj, ev: JsonObj) -> None:
-    step = tool_steps.get(block.get("tool_use_id", ""))
-    if step is None:
+def _merge_result(
+    tool_steps: dict[str, IndexedStep], block: JsonObj, ev: JsonObj, pending: list[IndexedStep]
+) -> None:
+    call = tool_steps.get(block.get("tool_use_id", ""))
+    if call is None:
         return
+    step = call[1]
     result = _as_dict(ev.get("toolUseResult"))
     if result.get("interrupted"):
         step["status"] = "interrupted"
@@ -237,6 +323,8 @@ def _merge_result(tool_steps: dict[str, JsonObj], block: JsonObj, ev: JsonObj) -
     else:
         step["status"] = "ok"
     step["ended_at"] = ev.get("timestamp")
+    if step["attributes"].get("gen_ai.tool.name") in {"Bash", "Read", "TaskOutput"}:
+        _merge_output(call, result, _result_output(result, block, ev.get("toolUseResult")), pending)
     if step["kind"] == "agent" and result.get("agentId"):
         step["attributes"]["agent.spawns_subagent_id"] = result["agentId"]
         if result.get("resolvedModel"):
@@ -245,7 +333,42 @@ def _merge_result(tool_steps: dict[str, JsonObj], block: JsonObj, ev: JsonObj) -
             step["attributes"]["agent.total_tokens"] = result["totalTokens"]
 
 
-def _system_step(ev: JsonObj, sub_id: str | None, ts: str, idx: int) -> JsonObj | None:
+def _merge_output(
+    call: IndexedStep, result: JsonObj, output: str, pending: list[IndexedStep]
+) -> None:
+    call_index, step = call
+    is_bash = step["attributes"]["gen_ai.tool.name"] == "Bash"
+    if is_bash and mark_pending(step, result, output):
+        pending.append(call)
+        return
+    if step["status"] == "ok":
+        for index, (launch_index, launch) in enumerate(pending):
+            if launch_index < call_index and resolve_from_output(launch, step, result, output):
+                pending.pop(index)
+                return
+    if is_bash and (outcome := parse_test_outcome(output)):
+        step["attributes"]["test.outcome"] = outcome
+
+
+def _result_output(result: JsonObj, block: JsonObj, raw_result: object) -> str:
+    streams = [result.get("stdout"), result.get("stderr")]
+    if output := "\n".join(s for s in streams if isinstance(s, str) and s):
+        return output
+    content = (
+        _as_dict(result.get("task")).get("output")
+        or _as_dict(result.get("file")).get("content")
+        or result.get("output")
+        or block.get("content")
+        or raw_result
+    )
+    if isinstance(content, list):
+        return "\n".join(text for b in content if isinstance(text := _as_dict(b).get("text"), str))
+    return content if isinstance(content, str) else ""
+
+
+def _system_step(
+    ev: JsonObj, sub_id: str | None, ts: str, idx: int, blocking_hooks: dict[str, JsonObj]
+) -> JsonObj | None:
     subtype = ev.get("subtype") or ""
     if "compact" in subtype or ev.get("isCompactSummary"):
         meta = _as_dict(ev.get("compactMetadata"))
@@ -260,15 +383,37 @@ def _system_step(ev: JsonObj, sub_id: str | None, ts: str, idx: int) -> JsonObj 
 
     if ev.get("hookInfos") or ev.get("preventedContinuation") is not None or ev.get("hookErrors"):
         infos = ev.get("hookInfos") or []
-        info = _as_dict(infos[0]) if infos else {}
+        info = (
+            _as_dict(infos[0])
+            if infos and (len(infos) == 1 or subtype != "stop_hook_summary")
+            else {}
+        )
+        blocking = (
+            blocking_hooks.get(ev.get("toolUseID", ""), {})
+            if subtype == "stop_hook_summary"
+            else {}
+        )
         prevented = bool(ev.get("preventedContinuation"))
-        verdict = "deny" if prevented or ev.get("hookErrors") else "allow"
+        verdict = "deny" if prevented or ev.get("hookErrors") or blocking else "allow"
         attrs = {
-            "harness.hook.name": info.get("name", "unknown"),
+            "harness.hook.name": blocking.get("hookName")
+            or info.get("hookName")
+            or info.get("name", "unknown"),
             "harness.hook.verdict": verdict,
-            "harness.hook.event": info.get("event", subtype or "unknown"),
+            "harness.hook.event": blocking.get("hookEvent")
+            or info.get("hookEvent")
+            or info.get("event", subtype or "unknown"),
             "harness.hook.prevented_continuation": prevented,
         }
+        if subtype == "stop_hook_summary":
+            attrs["harness.hook.entries"] = [
+                {
+                    k: v
+                    for k, v in _as_dict(entry).items()
+                    if k in {"name", "event", "hookName", "hookEvent", "command", "durationMs"}
+                }
+                for entry in infos
+            ]
         if ev.get("toolUseID"):
             attrs["harness.hook.target_step_id"] = ev["toolUseID"]
         step = _base_step(ev.get("uuid") or f"sys{idx}", "hook", ev, sub_id, ts)
@@ -290,7 +435,7 @@ def _mode_step(
         attrs["harness.mode.from"] = last_mode
     step: JsonObj = {
         "step_id": f"mode_{seq}",
-        "parent_step_id": None,
+        "parent_step_id": ev.get("parentUuid"),
         "subagent_id": None,
         "kind": "mode_change",
         "started_at": ts,
@@ -330,7 +475,7 @@ def _classify_text_decision(text: str) -> tuple[str, str] | None:
     return None
 
 
-def _text_decision_steps(events: list[JsonObj]) -> list[JsonObj]:
+def _text_decision_steps(events: list[JsonObj], record_steps: dict[str, str]) -> list[JsonObj]:
     """Phase 4d: decision steps inferred from assistant prose (opt-in, best-effort)."""
     steps: list[JsonObj] = []
     for idx, ev in enumerate(events):
@@ -343,7 +488,7 @@ def _text_decision_steps(events: list[JsonObj]) -> list[JsonObj]:
         if found is None:
             continue
         kind, snippet = found
-        uuid = ev.get("uuid")
+        uuid = record_steps.get(ev.get("uuid", ""))
         steps.append(
             {
                 "step_id": f"textdec_{idx}",

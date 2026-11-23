@@ -8,6 +8,9 @@ from jsonschema import Draft202012Validator
 
 from plumbline.cli import _validate, main
 from plumbline.recorders.claude_code import record_session
+from plumbline.scorer.infer import infer_decisions
+from plumbline.scorer.trace import Trace
+from plumbline.span_gaps import analyze_span_gaps
 
 FIXTURE = Path(__file__).parent / "fixtures" / "cc_session" / "sess.jsonl"
 SCHEMA = Path(__file__).parents[1] / "schema" / "plumbline-trace.schema.json"
@@ -325,3 +328,161 @@ def test_cli_record_writes_validated_output(tmp_path: Path) -> None:
     text = out.read_text()
     assert json.loads(text)["plumbline_version"] == "0.1.0"
     assert "/Users/example" not in text
+
+
+def _record(tmp_path: Path, *records: dict, infer_text_decisions: bool = False) -> dict:
+    path = tmp_path / "toy.jsonl"
+    path.write_text("\n".join(map(json.dumps, records)))
+    return record_session(path, infer_text_decisions=infer_text_decisions)
+
+
+def _turn(uid: str, parent: str | None = None, **message) -> dict:
+    return {"type": "assistant", "uuid": uid, "parentUuid": parent, "message": message}
+
+
+def test_parent_walks_through_result_and_attachment(tmp_path: Path) -> None:
+    call = {"type": "tool_use", "name": "Read", "id": "read-toy", "input": {}}
+    trace = _record(
+        tmp_path,
+        _turn("first", "absent", content=[call]),
+        {
+            "type": "user",
+            "uuid": "result",
+            "parentUuid": "first",
+            "message": {"content": [{"type": "tool_result", "tool_use_id": "read-toy"}]},
+        },
+        {"type": "attachment", "uuid": "note", "parentUuid": "result"},
+        _turn("second", "note", content="done"),
+    )
+    by_id = {step["step_id"]: step for step in trace["steps"]}
+    assert by_id["first"]["parent_step_id"] is None
+    assert by_id["second"]["parent_step_id"] == "first"
+    assert "BROKEN_SPAN_REFERENCE" not in {f["code"] for f in analyze_span_gaps(trace)["findings"]}
+
+
+def test_shared_message_id_merges_usage_and_preserves_calls(tmp_path: Path) -> None:
+    usage = {"input_tokens": 17, "output_tokens": 11}
+    trace = _record(
+        tmp_path,
+        _turn("first", id="reply", usage=usage, content=[{"type": "thinking"}]),
+        _turn(
+            "second",
+            "first",
+            id="reply",
+            usage=usage,
+            content=[
+                {"type": "tool_use", "name": "Read", "id": "read-a", "input": {}},
+                {"type": "tool_use", "name": "Read", "id": "read-b", "input": {}},
+                {"type": "text", "text": "Could you clarify the toy color?"},
+            ],
+            stop_reason="tool_use",
+        ),
+        _turn("next", "second", content="done"),
+        infer_text_decisions=True,
+    )
+    model_steps = steps_of_kind(trace, "llm")
+    assert [s["step_id"] for s in model_steps] == ["first", "next"]
+    assert model_steps[1]["parent_step_id"] == "first"
+    attrs = model_steps[0]["attributes"]
+    assert attrs["agent.reasoning"]
+    assert attrs["gen_ai.response.finish_reasons"] == ["tool_use"]
+    assert attrs["gen_ai.usage.input_tokens"] == 17
+    assert attrs["gen_ai.usage.output_tokens"] == 11
+    assert [s["step_id"] for s in steps_of_kind(trace, "tool_call")] == ["read-a", "read-b"]
+    (decision,) = steps_of_kind(trace, "decision")
+    assert decision["caused_by"] == "first"
+    assert decision["attributes"]["agent.decision.evidence"] == ["first"]
+
+
+def test_api_error_message_has_error_status(tmp_path: Path) -> None:
+    trace = _record(
+        tmp_path, {**_turn("error-turn", content="toy error"), "isApiErrorMessage": True}
+    )
+    assert trace["steps"][0]["status"] == "error"
+
+
+def test_empty_usage_fragment_contributes_usage_to_message(tmp_path: Path) -> None:
+    trace = _record(
+        tmp_path,
+        _turn("text", id="reply", content="toy"),
+        _turn("usage", "text", id="reply", content=[], usage={"output_tokens": 9}),
+    )
+    (invocation,) = steps_of_kind(trace, "llm")
+    assert invocation["attributes"]["gen_ai.usage.output_tokens"] == 9
+
+
+def test_skips_counted_by_type_without_payload(tmp_path: Path, capsys) -> None:
+    trace = _record(
+        tmp_path,
+        _turn("one", content="start"),
+        {"type": "data-flow-incomplete", "payload": "toy-marker"},
+        {"type": "system", "subtype": "api_error", "error": "toy-marker"},
+        *[{"type": "toy-future", "payload": "toy-marker"}] * 2,
+        _turn("two", content="end"),
+    )
+    assert [s["step_id"] for s in trace["steps"]] == ["one", "two"]
+    assert sorted(capsys.readouterr().err.splitlines()) == [
+        "skipped toy-future: 2",
+        "warning: skipped data-flow-incomplete: 1",
+        "warning: skipped system.api_error: 1",
+    ]
+
+
+def test_hook_summary_keeps_entries_and_joins_blocking_identity(tmp_path: Path, capsys) -> None:
+    infos = [
+        {"name": "toy-check"},
+        {"command": "check-toy", "durationMs": 11},
+        {"hookName": "toy-hook", "hookEvent": "Stop"},
+    ]
+    attachment = {"type": "hook_blocking_error", "hookName": "toy-gate", "hookEvent": "Stop"}
+    trace = _record(
+        tmp_path,
+        _turn("one", content="start"),
+        {
+            "type": "system",
+            "subtype": "stop_hook_summary",
+            "toolUseID": "gate-call",
+            "preventedContinuation": True,
+            "hookInfos": infos,
+        },
+        {"type": "attachment", "attachment": {**attachment, "toolUseID": "gate-call"}},
+        {"type": "attachment", "attachment": {**attachment, "toolUseID": "other", "hookName": "x"}},
+    )
+    (hook,) = steps_of_kind(trace, "hook")
+    attrs = hook["attributes"]
+    assert attrs["harness.hook.name"] == "toy-gate"
+    assert attrs["harness.hook.event"] == "Stop"
+    assert attrs["harness.hook.verdict"] == "deny"
+    assert attrs["harness.hook.entries"] == infos
+    assert capsys.readouterr().err.splitlines() == ["skipped attachment: 1"]
+
+
+@pytest.mark.parametrize("retry_result", ["missing", "pending", "failed"])
+def test_unverified_retry_after_edit_gets_no_credit(tmp_path: Path, retry_result: str) -> None:
+    def call(uid: str, tool: str, **args) -> dict:
+        return _turn(
+            f"turn-{uid}", content=[{"type": "tool_use", "id": uid, "name": tool, "input": args}]
+        )
+
+    def result(uid: str, *, error: bool = False, **data) -> dict:
+        block = {"type": "tool_result", "tool_use_id": uid, "is_error": error}
+        return {"type": "user", "message": {"content": [block]}, "toolUseResult": data}
+
+    records = [
+        call("initial", "Bash", command="pytest toy"),
+        result("initial", error=True, stdout="1 failed in 0.01s"),
+        call("edit", "Edit", file_path="toy.py"),
+        result("edit"),
+        call("retry", "Bash", command="pytest toy"),
+    ]
+    if retry_result != "missing":
+        records.append(result("retry", backgroundTaskId="toy-task", outputPath="toy.log"))
+    if retry_result == "failed":
+        records.extend(
+            [call("read", "Read", file_path="toy.log"), result("read", stdout="1 failed in 0.01s")]
+        )
+    records.extend([call("unrelated", "Bash", command="echo toy"), result("unrelated")])
+    trace = Trace.from_dict(_record(tmp_path, *records))
+    retry = next(step for step in trace.steps if step.step_id == "retry")
+    assert retry.status == ("error" if retry_result == "failed" else None)
+    assert infer_decisions(trace) == []

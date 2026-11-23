@@ -37,22 +37,29 @@ def _message_problem(record: JsonObj) -> str | None:
             or record.get("isApiErrorMessage")
         )
     ):
+        if any(
+            block.get("type") == "text"
+            and "text" in block
+            and not isinstance(block.get("text"), str)
+            for block in content
+        ):
+            return "text"
         return None
     return "content"
 
 
+def _record_problem(record: JsonObj) -> str | None:
+    parent = record.get("parentUuid")
+    if parent is not None and not isinstance(parent, str):
+        return "parentUuid"
+    if record.get("type") in ("assistant", "user"):
+        return _message_problem(record)
+    return None
+
+
 def _is_claude_record(record: JsonObj) -> bool:
     kind = record.get("type")
-    if kind in ("assistant", "user"):
-        return True  # Message shape was checked before format detection.
-    control_field = {"system": "subtype", "mode": "mode", "permission-mode": "permissionMode"}
-    if isinstance(kind, str) and kind in control_field:
-        return isinstance(record.get(control_field[kind]), str)
-    return (
-        isinstance(kind, str)
-        and isinstance(record.get("sessionId"), str)
-        and ("uuid" in record or "timestamp" in record)
-    )
+    return kind in ("assistant", "user")
 
 
 def load_jsonl(path: Path) -> list[JsonObj]:
@@ -77,7 +84,7 @@ def load_jsonl(path: Path) -> list[JsonObj]:
             if not isinstance(value, dict):
                 sys.stderr.write(f"record line {line_number} skipped: record\n")
                 continue
-            if value.get("type") in ("assistant", "user") and (reason := _message_problem(value)):
+            if reason := _record_problem(value):
                 sys.stderr.write(f"record line {line_number} skipped: {reason}\n")
                 continue
             if not recognized:

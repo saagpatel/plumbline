@@ -20,6 +20,12 @@ def _write(path: Path, records: list[object]) -> Path:
         {"type": "response_item", "payload": {"call_id": "call-1"}},
         {"role": "assistant", "message": {"content": [{"type": "tool_use"}]}},
         {"type": "PLANNER_RESPONSE", "tool_calls": [{"name": "exec"}]},
+        {
+            "type": "metric",
+            "sessionId": "synthetic-session",
+            "timestamp": "2026-01-01T00:00:00Z",
+            "value": 1,
+        },
         {"type": []},
     ],
 )
@@ -45,10 +51,31 @@ def test_cli_rejects_binary_input_with_format_diagnostic(tmp_path: Path, capsys)
 
 def test_unrecognized_records_are_bounded_by_sniff_limit(tmp_path: Path) -> None:
     source = tmp_path / "large-other.jsonl"
-    source.write_text("\n".join(json.dumps({"type": "future", "index": i}) for i in range(101)))
+    unknown = [{"type": "future", "index": i} for i in range(100)]
+    valid = {
+        "type": "assistant",
+        "uuid": "after-limit",
+        "message": {"content": "synthetic turn"},
+    }
+    _write(source, [*unknown, valid])
 
     with pytest.raises(ValueError, match="unsupported transcript format"):
         record_session(source)
+
+
+def test_claude_record_within_sniff_limit_is_accepted(tmp_path: Path) -> None:
+    source = tmp_path / "inside-limit.jsonl"
+    unknown = [{"type": "future", "index": i} for i in range(99)]
+    valid = {
+        "type": "assistant",
+        "uuid": "at-limit",
+        "message": {"content": "synthetic turn"},
+    }
+    _write(source, [*unknown, valid])
+
+    trace = record_session(source)
+
+    assert [step["step_id"] for step in trace["steps"] if step["kind"] == "llm"] == ["at-limit"]
 
 
 def test_malformed_records_do_not_use_sniff_limit(tmp_path: Path) -> None:
@@ -76,6 +103,18 @@ def test_malformed_records_do_not_use_sniff_limit(tmp_path: Path) -> None:
         (b'{"type":"assistant","message":42}', "message"),
         (b'{"type":"assistant","message":{"content":[]}}', "content"),
         (b'{"type":"assistant","message":{}}', "content"),
+        (
+            b'{"type":"assistant","parentUuid":[],"message":{"content":"bad parent"}}',
+            "parentuuid",
+        ),
+        (
+            b'{"type":"mode","uuid":"bad-mode","parentUuid":[],"mode":"acceptEdits"}',
+            "parentuuid",
+        ),
+        (
+            b'{"type":"assistant","message":{"content":[{"type":"text","text":{"bad":true}}]}}',
+            "text",
+        ),
     ],
 )
 def test_malformed_lines_preserve_valid_events_and_report_line(

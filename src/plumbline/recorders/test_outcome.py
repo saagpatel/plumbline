@@ -10,6 +10,29 @@ _COUNTS = re.compile(r"(?P<count>\d+)\s+(?P<kind>passed|failed|skipped|errors?|t
 _PYTEST_KIND = r"passed|failed|skipped|errors?|deselected|xfailed|xpassed|warnings?"
 
 
+_JS_RUNNERS = ("jest", "vitest")
+_RUNNER_PREFIXES = {
+    ("pytest",): ("pytest",),
+    ("python", "-m", "pytest"): ("pytest",),
+    ("python", "-m", "unittest"): ("unittest",),
+    ("jest",): ("jest",),
+    ("vitest",): ("vitest",),
+    ("npx", "jest"): ("jest",),
+    ("npx", "vitest"): ("vitest",),
+    ("npm", "test"): _JS_RUNNERS,
+    ("pnpm", "test"): _JS_RUNNERS,
+    ("yarn", "test"): _JS_RUNNERS,
+    ("cargo", "test"): ("cargo",),
+    ("go", "test"): ("go",),
+}
+_LAUNCHER = r"(?:pytest|python[\d.]*|jest|vitest|npx|npm|pnpm|yarn|cargo|go)"
+_START_FAILURE = re.compile(
+    rf"(?:\b{_LAUNCHER}: (?:command not found|not found|no such file or directory)\b"
+    rf"|\bcommand not found: {_LAUNCHER}\b)",
+    re.IGNORECASE,
+)
+
+
 def _summary_counts(text: str) -> dict[str, int]:
     counts: dict[str, int] = {"passed": 0, "failed": 0, "skipped": 0, "errors": 0}
     for match in _COUNTS.finditer(text):
@@ -22,6 +45,12 @@ def _summary_counts(text: str) -> dict[str, int]:
             key = kind
         counts[key] += int(match.group("count"))
     return counts
+
+
+def _suite_failures(output: str, runner: str) -> int:
+    heading = "Test Files" if runner == "vitest" else "Test Suites:"
+    summaries = re.findall(rf"^[ \t]*{heading}[ \t]+(.+)$", output, re.MULTILINE)
+    return sum(int(n) for line in summaries for n in re.findall(r"\b(\d+) failed\b", line))
 
 
 def _pytest(output: str) -> dict[str, int | str] | None:
@@ -48,9 +77,10 @@ def _test_line(output: str, runner: str) -> dict[str, int | str] | None:
     else:
         pattern = r"^[ \t]*Tests:[ \t]*(.+?),[ \t]*(\d+) total[ \t]*$"
     matches = list(re.finditer(pattern, output, re.MULTILINE))
-    if not matches:
+    suite_failures = _suite_failures(output, runner)
+    if not matches and not suite_failures:
         return None
-    counts: dict[str, int] = {"passed": 0, "failed": 0, "skipped": 0, "errors": 0}
+    counts: dict[str, int] = {"passed": 0, "failed": 0, "skipped": 0, "errors": suite_failures}
     for match in matches:
         fields, total = match.groups()
         if not all(_COUNTS.fullmatch(field.strip()) for field in re.split(r"[|,]", fields)):
@@ -116,20 +146,15 @@ def _cargo(output: str) -> dict[str, int | str] | None:
     }
 
 
-def _go(output: str, command: str | None) -> dict[str, int | str] | None:
+def _go(output: str, *, sole_runner: bool) -> dict[str, int | str] | None:
     passed = re.findall(r"^ok[ \t]+\S+[ \t]+(?:[\d.]+s|\(cached\))[ \t]*$", output, re.MULTILINE)
-    failed = re.findall(
-        r"^FAIL[ \t]+\S+(?:[ \t]+(?:[\d.]+s|\[(?:build|setup) failed\]))?[ \t]*$",
-        output,
-        re.MULTILINE,
-    )
+    # A bare FAIL path in mixed output can be a Jest headline.
+    detail = r"(?:[ \t]+(?:[\d.]+s|\[(?:build|setup) failed\]))"
+    suffix = detail + "?" if sole_runner else detail
+    failed = re.findall(rf"^FAIL[ \t]+\S+{suffix}[ \t]*$", output, re.MULTILINE)
     final_failure = output.rstrip().rpartition("\n")[2].strip() == "FAIL"
-    if not passed and not failed:
-        go_command = isinstance(command, str) and re.match(
-            r"^\s*(?:\S*/)?go\s+test(?:\s|$)", command
-        )
-        if not (final_failure and go_command):
-            return None
+    if not passed and not failed and not final_failure:
+        return None
     outcome: dict[str, int | str] = {
         "runner": "go test",
         "passed_packages": len(passed),
@@ -145,23 +170,57 @@ def _go(output: str, command: str | None) -> dict[str, int | str] | None:
     return outcome
 
 
-def parse_test_outcome(output: str, *, command: str | None = None) -> dict[str, int | str] | None:
+def parse_test_outcome(output: str, *, command: str | None = None) -> dict[str, object] | None:
     """Return runner name and summary counts, without preserving output content."""
+    runners = _command_runners(command)
+    if not runners:
+        return None
     clean = _ANSI.sub("", output)
+    if _START_FAILURE.search(clean):
+        return None
     parsed = (
-        _pytest(clean),
-        _unittest(clean),
-        _test_line(clean, "vitest"),
-        _test_line(clean, "jest"),
-        _cargo(clean),
-        _go(clean, command),
+        _pytest(clean) if "pytest" in runners else None,
+        _unittest(clean) if "unittest" in runners else None,
+        _test_line(clean, "vitest") if "vitest" in runners else None,
+        _test_line(clean, "jest") if "jest" in runners else None,
+        _cargo(clean) if "cargo" in runners else None,
+        _go(clean, sole_runner=len(runners) == 1) if "go" in runners else None,
     )
     outcomes = [outcome for outcome in parsed if outcome is not None]
     if not outcomes:
         return None
     if len(outcomes) == 1:
-        return outcomes[0]
+        return dict(outcomes[0])
     counts: Counter[str] = Counter()
     for outcome in outcomes:
         counts.update({key: value for key, value in outcome.items() if isinstance(value, int)})
-    return {"runner": "multiple", **counts}
+    return {
+        "runner": "multiple",
+        **counts,
+        "runner_outcomes": outcomes,
+    }
+
+
+def _command_runners(command: str | None) -> set[str]:
+    """Recognize literal commands in simple shell lists and pipelines without executing them."""
+    if not isinstance(command, str) or re.search(r"[\\$`(){}#]|<<", command):
+        return set()
+    # Mask quoted arguments before looking for command separators. Unpaired quotes,
+    # substitutions, escaped operators, and here-documents leave attribution unknown.
+    literal = re.sub(r"'[^']*'|\"[^\"]*\"", "_", command)
+    if "'" in literal or '"' in literal:
+        return set()
+    runners: set[str] = set()
+    for stage in re.split(r"&&|[;|\n]", literal):
+        words = stage.split()
+        while words and re.match(r"[A-Za-z_]\w*=", words[0]):
+            words.pop(0)
+        if not words or not re.fullmatch(r"[\w./-]+", words[0]):
+            continue
+        words[0] = words[0].rsplit("/", 1)[-1]
+        if re.fullmatch(r"python(?:\d+(?:\.\d+)*)?", words[0]):
+            words[0] = "python"
+        for prefix, names in _RUNNER_PREFIXES.items():
+            if tuple(words[: len(prefix)]) == prefix:
+                runners.update(names)
+    return runners

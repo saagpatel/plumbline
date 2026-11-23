@@ -37,22 +37,25 @@ def _message_problem(record: JsonObj) -> str | None:
             or record.get("isApiErrorMessage")
         )
     ):
-        if any(
+        return _content_problem(content)
+    return "content"
+
+
+def _content_problem(content: list[JsonObj]) -> str | None:
+    for block in content:
+        if (
             block.get("type") == "text"
             and "text" in block
             and not isinstance(block.get("text"), str)
-            for block in content
         ):
             return "text"
-        if any(
-            block.get("type") == "tool_use"
-            and "input" in block
-            and not isinstance(block["input"], dict)
-            for block in content
-        ):
-            return "input"
-        return None
-    return "content"
+        if block.get("type") == "tool_use":
+            tool_id = block.get("id")
+            if tool_id is not None and not isinstance(tool_id, str):
+                return "tool_use.id"
+            if "input" in block and not isinstance(block["input"], dict):
+                return "input"
+    return None
 
 
 def _record_problem(record: JsonObj) -> str | None:
@@ -62,6 +65,15 @@ def _record_problem(record: JsonObj) -> str | None:
     parent = record.get("parentUuid")
     if parent is not None and not isinstance(parent, str):
         return "parentUuid"
+    if record.get("type") == "attachment":
+        tool_use_id = record.get("toolUseID")
+        if tool_use_id is not None and not isinstance(tool_use_id, str):
+            return "toolUseID"
+        attachment = record.get("attachment")
+        if isinstance(attachment, dict):
+            tool_use_id = attachment.get("toolUseID")
+            if tool_use_id is not None and not isinstance(tool_use_id, str):
+                return "toolUseID"
     if record.get("type") in ("assistant", "user"):
         return _message_problem(record)
     return None

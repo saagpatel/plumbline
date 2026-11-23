@@ -101,6 +101,16 @@ def test_malformed_records_do_not_use_sniff_limit(tmp_path: Path) -> None:
         (b"42", "record"),
         (b'{"type":"attachment","uuid":["synthetic"]}', "uuid"),
         (
+            b'{"type":"attachment","attachment":{"type":"hook_blocking_error",'
+            b'"toolUseID":["synthetic"]}}',
+            "tooluseid",
+        ),
+        (
+            b'{"type":"assistant","message":{"content":[{"type":"tool_use",'
+            b'"id":["synthetic"],"name":"Read","input":{}}]}}',
+            "tool_use.id",
+        ),
+        (
             b'{"type":"assistant","message":{"content":[{"type":"tool_use",'
             b'"name":"Agent","input":["synthetic"]}]}}',
             "input",

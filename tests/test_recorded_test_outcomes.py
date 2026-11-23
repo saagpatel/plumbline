@@ -85,10 +85,41 @@ def test_quoted_shell_separator_does_not_start_a_runner_command() -> None:
     assert parse_test_outcome("1 passed in 0.01s", command="echo ';' pytest") is None
 
 
-def test_newline_separates_runner_commands() -> None:
-    outcome = parse_test_outcome("1 passed in 0.01s", command="echo start\npytest toy")
-    assert outcome is not None
-    assert outcome["runner"] == "pytest"
+@pytest.mark.parametrize(
+    "command",
+    [
+        "echo start\npytest toy",
+        "false && pytest unit; cat",
+        "pytest unit; pytest integration; true",
+        "pytest unit && true",
+        "false || pytest unit",
+        "pytest unit &",
+        "pytest unit | cat",
+        "pytest unit | tail -1 saved-summary",
+        "pytest unit | head < saved-summary",
+        "pytest unit | tail -1 | cat",
+        "'not an assignment'=x pytest unit",
+    ],
+)
+def test_other_shell_stages_preclude_outcome(tmp_path, command: str) -> None:
+    trace = _record(tmp_path, command, "1 passed in 0.01s")
+    (call,) = [step for step in trace["steps"] if step["kind"] == "tool_call"]
+    assert "test.outcome" not in call["attributes"]
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "uv run pytest",
+        "uv run --frozen pytest tests/test_toy.py | tail -1",
+        "python -m pytest toy 2>&1",
+        "poetry run pytest toy 2>&1 | head -n 4",
+    ],
+)
+def test_pytest_launchers_record_a_single_filtered_summary(tmp_path, command: str) -> None:
+    trace = _record(tmp_path, command, "1 failed in 0.01s")
+    (call,) = [step for step in trace["steps"] if step["kind"] == "tool_call"]
+    assert call["attributes"]["test.outcome"]["failed"] == 1
 
 
 def test_go_verbose_counts_observed_tests() -> None:
@@ -180,13 +211,13 @@ def test_go_package_headlines_require_go_test_command() -> None:
     assert parse_test_outcome("ok toy 0.1s", command="go ./test") is None
 
 
-def test_mixed_go_and_jest_output_requires_a_go_package_result() -> None:
-    outcome = parse_test_outcome(
-        "ok toy 0.1s\nFAIL ./sample.test.js\nTests: 1 failed, 1 total", command="go test; jest"
+def test_mixed_go_and_jest_output_is_unattributed() -> None:
+    assert (
+        parse_test_outcome(
+            "ok toy 0.1s\nFAIL ./sample.test.js\nTests: 1 failed, 1 total", command="go test; jest"
+        )
+        is None
     )
-    assert outcome is not None
-    assert outcome["passed_packages"] == 1
-    assert outcome["failed_packages"] == 0
 
 
 def test_go_aggregate_failure_does_not_invent_a_failed_test_or_package() -> None:
@@ -283,20 +314,10 @@ def test_compound_runner_summaries_sum_failures_and_passes(
     assert parse_test_outcome(output, command=_command_for(expected)) == expected
 
 
-def test_mixed_runner_summaries_preserve_failures() -> None:
-    assert parse_test_outcome(
-        "1 failed in 0.01s\nTests: 3 passed, 3 total", command="pytest; jest"
-    ) == {
-        "runner": "multiple",
-        "passed": 3,
-        "failed": 1,
-        "skipped": 0,
-        "errors": 0,
-        "runner_outcomes": [
-            {"runner": "pytest", "passed": 0, "failed": 1, "skipped": 0, "errors": 0},
-            {"runner": "jest", "passed": 3, "failed": 0, "skipped": 0, "errors": 0},
-        ],
-    }
+@pytest.mark.parametrize("jest_output", ["Tests: 3 passed, 3 total", "sh: jest: command not found"])
+def test_several_runners_have_no_attributable_outcome(jest_output: str) -> None:
+    output = "1 failed in 0.01s\n" + jest_output
+    assert parse_test_outcome(output, command="pytest; jest; true") is None
 
 
 @pytest.mark.parametrize(

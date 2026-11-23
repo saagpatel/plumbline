@@ -13,6 +13,9 @@ _PYTEST_KIND = r"passed|failed|skipped|errors?|deselected|xfailed|xpassed|warnin
 _JS_RUNNERS = ("jest", "vitest")
 _RUNNER_PREFIXES = {
     ("pytest",): ("pytest",),
+    ("uv", "run", "pytest"): ("pytest",),
+    ("uv", "run", "--frozen", "pytest"): ("pytest",),
+    ("poetry", "run", "pytest"): ("pytest",),
     ("python", "-m", "pytest"): ("pytest",),
     ("python", "-m", "unittest"): ("unittest",),
     ("jest",): ("jest",),
@@ -22,8 +25,8 @@ _RUNNER_PREFIXES = {
     ("npm", "test"): _JS_RUNNERS,
     ("pnpm", "test"): _JS_RUNNERS,
     ("yarn", "test"): _JS_RUNNERS,
-    ("cargo", "test"): ("cargo",),
-    ("go", "test"): ("go",),
+    ("cargo", "test"): ("cargo test",),
+    ("go", "test"): ("go test",),
 }
 _LAUNCHER = r"(?:pytest|python[\d.]*|jest|vitest|npx|npm|pnpm|yarn|cargo|go)"
 _START_FAILURE = re.compile(
@@ -146,12 +149,10 @@ def _cargo(output: str) -> dict[str, int | str] | None:
     }
 
 
-def _go(output: str, *, sole_runner: bool) -> dict[str, int | str] | None:
+def _go(output: str) -> dict[str, int | str] | None:
     passed = re.findall(r"^ok[ \t]+\S+[ \t]+(?:[\d.]+s|\(cached\))[ \t]*$", output, re.MULTILINE)
-    # A bare FAIL path in mixed output can be a Jest headline.
     detail = r"(?:[ \t]+(?:[\d.]+s|\[(?:build|setup) failed\]))"
-    suffix = detail + "?" if sole_runner else detail
-    failed = re.findall(rf"^FAIL[ \t]+\S+{suffix}[ \t]*$", output, re.MULTILINE)
+    failed = re.findall(rf"^FAIL[ \t]+\S+{detail}?[ \t]*$", output, re.MULTILINE)
     final_failure = output.rstrip().rpartition("\n")[2].strip() == "FAIL"
     if not passed and not failed and not final_failure:
         return None
@@ -172,55 +173,66 @@ def _go(output: str, *, sole_runner: bool) -> dict[str, int | str] | None:
 
 def parse_test_outcome(output: str, *, command: str | None = None) -> dict[str, object] | None:
     """Return runner name and summary counts, without preserving output content."""
-    runners = _command_runners(command)
+    runners = command_runners(command)
     if not runners:
         return None
     clean = _ANSI.sub("", output)
     if _START_FAILURE.search(clean):
         return None
+    # Package scripts may invoke Jest or Vitest. Require one matching summary format.
     parsed = (
         _pytest(clean) if "pytest" in runners else None,
         _unittest(clean) if "unittest" in runners else None,
         _test_line(clean, "vitest") if "vitest" in runners else None,
         _test_line(clean, "jest") if "jest" in runners else None,
-        _cargo(clean) if "cargo" in runners else None,
-        _go(clean, sole_runner=len(runners) == 1) if "go" in runners else None,
+        _cargo(clean) if "cargo test" in runners else None,
+        _go(clean) if "go test" in runners else None,
     )
     outcomes = [outcome for outcome in parsed if outcome is not None]
-    if not outcomes:
-        return None
-    if len(outcomes) == 1:
-        return dict(outcomes[0])
-    counts: Counter[str] = Counter()
-    for outcome in outcomes:
-        counts.update({key: value for key, value in outcome.items() if isinstance(value, int)})
-    return {
-        "runner": "multiple",
-        **counts,
-        "runner_outcomes": outcomes,
-    }
+    return dict(outcomes[0]) if len(outcomes) == 1 else None
 
 
-def _command_runners(command: str | None) -> set[str]:
-    """Recognize literal commands in simple shell lists and pipelines without executing them."""
-    if not isinstance(command, str) or re.search(r"[\\$`(){}#]|<<", command):
-        return set()
-    # Mask quoted arguments before looking for command separators. Unpaired quotes,
-    # substitutions, escaped operators, and here-documents leave attribution unknown.
-    literal = re.sub(r"'[^']*'|\"[^\"]*\"", "_", command)
-    if "'" in literal or '"' in literal:
-        return set()
-    runners: set[str] = set()
-    for stage in re.split(r"&&|[;|\n]", literal):
-        words = stage.split()
-        while words and re.match(r"[A-Za-z_]\w*=", words[0]):
-            words.pop(0)
-        if not words or not re.fullmatch(r"[\w./-]+", words[0]):
-            continue
-        words[0] = words[0].rsplit("/", 1)[-1]
-        if re.fullmatch(r"python(?:\d+(?:\.\d+)*)?", words[0]):
-            words[0] = "python"
-        for prefix, names in _RUNNER_PREFIXES.items():
-            if tuple(words[: len(prefix)]) == prefix:
-                runners.update(names)
-    return runners
+def _literal_command(command: str | None) -> str:
+    """Mask quoted arguments. Leave dynamic or malformed shell syntax unclassified."""
+    if not isinstance(command, str) or re.search(r"[\\$`]", command):
+        return ""
+    literal = re.sub(r"'[^']*'|\"[^\"]*\"", ":", command)
+    return "" if re.search(r"""['"(){}#]""", literal) else literal
+
+
+def _runner_prefix(stage: str) -> tuple[str, ...]:
+    words = re.split(r"[ \t]+", stage.strip(" \t"))
+    while words and re.match(r"[A-Za-z_]\w*=", words[0], re.ASCII):
+        words.pop(0)
+    if not words:
+        return ()
+    words[0] = words[0].rsplit("/", 1)[-1]
+    if re.fullmatch(r"python(?:\d+(?:\.\d+)*)?", words[0]):
+        words[0] = "python"
+    for prefix, names in _RUNNER_PREFIXES.items():
+        if tuple(words[: len(prefix)]) == prefix:
+            return names
+    return ()
+
+
+def mentions_test_invocation(command: str) -> bool:
+    """Identify runner stages for judge previews, even when counts are unattributable."""
+    if _runner_prefix(command):
+        return True  # A literal executable can have dynamic arguments.
+    return any(_runner_prefix(stage) for stage in re.split(r"[;&|\n]", _literal_command(command)))
+
+
+def command_runners(command: str | None) -> tuple[str, ...]:
+    """Candidate runner labels for a single invocation, optionally filtered on stdout."""
+    literal = _literal_command(command).strip(" \t\n")
+    # Allow a trailing stderr merge on either stage, without swallowing other redirects.
+    literal = re.sub(r"[ \t]+2>&1(?=[ \t]*(?:\||$))", "", literal)
+    if re.search(r"[;&<>\n]", literal):
+        return ()
+    runner, pipe, output_filter = literal.partition("|")
+    if pipe and not re.fullmatch(
+        r"(?:tail|head)(?:[ \t]+(?:-\d+|-[nc][ \t]*[+-]?\d+|--(?:lines|bytes)=[+-]?\d+))?",
+        output_filter.strip(" \t"),
+    ):
+        return ()
+    return _runner_prefix(runner)

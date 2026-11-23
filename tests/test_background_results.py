@@ -26,6 +26,23 @@ def _result(uid: str, data: dict, text: str, *, error: bool = False) -> dict:
     [
         (None, {}, {}, "", False, None),
         ("TaskOutput", {"task_id": _ID}, {}, "Process exited with code 0", False, "ok"),
+        ("Read", {"file_path": _PATH}, {}, "1 passed in 0.1s", False, "ok"),
+        (
+            "Read",
+            {"file_path": _PATH},
+            {},
+            "FAIL example/setup [setup failed]",
+            False,
+            None,
+        ),
+        (
+            "Read",
+            {"file_path": _PATH},
+            {},
+            "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out",
+            False,
+            None,
+        ),
         ("Read", {"file_path": _PATH}, {}, "Process exited with code 1", False, "error"),
         ("Read", {"file_path": _PATH + ".old"}, {}, "Process exited with code 0", False, None),
         ("TaskOutput", {"task_id": _ID + "2"}, {}, "Process exited with code 0", False, None),
@@ -111,5 +128,92 @@ def test_output_read_started_before_launch_cannot_resolve_it(tmp_path) -> None:
     path = tmp_path / "toy.jsonl"
     path.write_text("\n".join(map(json.dumps, records)))
     launch = next(s for s in record_session(path)["steps"] if s["step_id"] == "launch")
+    assert launch["status"] is None
+    assert "ended_at" not in launch
+
+
+def test_intermediate_log_summary_does_not_resolve_launch(tmp_path) -> None:
+    records = [
+        _call("launch", "Bash", {"command": "go test ./..."}),
+        _result(
+            "launch",
+            {"backgroundTaskId": _ID, "outputPath": _PATH},
+            f"Running with ID: {_ID}",
+        ),
+        _call("read-log", "Read", {"file_path": _PATH}),
+        {
+            **_result("read-log", {}, "ok example/unit 0.01s"),
+            "timestamp": "2026-01-01T00:00:03Z",
+        },
+        _call("finish", "TaskOutput", {"task_id": _ID}),
+        {
+            **_result(
+                "finish",
+                {"task": {"status": "failed", "exitCode": 1}},
+                "Process exited with code 1",
+            ),
+            "timestamp": _TS,
+        },
+    ]
+    path = tmp_path / "toy.jsonl"
+    path.write_text("\n".join(map(json.dumps, records)))
+
+    launch = next(s for s in record_session(path)["steps"] if s["step_id"] == "launch")
+
+    assert launch["status"] == "error"
+    assert launch["ended_at"] == _TS
+    assert launch["attributes"]["harness.background_task_pending"] is False
+
+
+@pytest.mark.parametrize(
+    ("command", "output"),
+    [
+        ("pytest unit; pytest integration", "1 passed in 0.1s"),
+        ("pytest unit", "1 passed in 0.1s\nmore work in 0.1s"),
+    ],
+)
+def test_live_log_must_show_the_launch_is_finished(tmp_path, command, output) -> None:
+    records = [
+        _call("launch", "Bash", {"command": command}),
+        _result(
+            "launch",
+            {"backgroundTaskId": _ID, "outputPath": _PATH},
+            f"Running with ID: {_ID}",
+        ),
+        _call("read-log", "Read", {"file_path": _PATH}),
+        {
+            **_result("read-log", {}, output),
+            "timestamp": _TS,
+        },
+    ]
+    path = tmp_path / "compound.jsonl"
+    path.write_text("\n".join(map(json.dumps, records)))
+
+    launch = next(s for s in record_session(path)["steps"] if s["step_id"] == "launch")
+
+    assert launch["status"] is None
+    assert "ended_at" not in launch
+    assert launch["attributes"]["harness.background_task_pending"] is True
+
+
+def test_reader_task_metadata_is_not_authoritative(tmp_path) -> None:
+    records = [
+        _call("launch", "Bash", {"command": "pytest unit"}),
+        _result(
+            "launch",
+            {"backgroundTaskId": _ID, "outputPath": _PATH},
+            f"Running with ID: {_ID}",
+        ),
+        _call("read-log", "Read", {"file_path": _PATH}),
+        {
+            **_result("read-log", {"task": {"status": "completed", "exitCode": 0}}, ""),
+            "timestamp": _TS,
+        },
+    ]
+    path = tmp_path / "reader-task.jsonl"
+    path.write_text("\n".join(map(json.dumps, records)))
+
+    launch = next(s for s in record_session(path)["steps"] if s["step_id"] == "launch")
+
     assert launch["status"] is None
     assert "ended_at" not in launch

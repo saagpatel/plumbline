@@ -10,6 +10,7 @@ from plumbline.recorders.test_outcome import parse_test_outcome
 
 _EXIT_CODE = re.compile(r"^(?:process )?exited with code (-?\d+)\s*$", re.IGNORECASE | re.MULTILINE)
 _OUTPUT_PATH = re.compile(r"\bOutput is being written to:[ \t]*([^\r\n]+)")
+_UNITTEST_FINAL = re.compile(r"(?:OK|FAILED)(?: \([^)]+\))?")
 
 
 def mark_pending(step: dict[str, Any], result: dict[str, Any], ack_text: str = "") -> bool:
@@ -44,15 +45,18 @@ def resolve_from_output(
     attrs = launch["attributes"]
     if reader["subagent_id"] != launch["subagent_id"] or not _reads_task_output(attrs, reader):
         return False
-    task = result.get("task")
-    task = task if isinstance(task, dict) else {}
+    is_task_output = reader["attributes"].get("gen_ai.tool.name") == "TaskOutput"
+    task_result = result.get("task") if is_task_output else None
+    task = task_result if isinstance(task_result, dict) else {}
     reported_id = task.get("task_id") or task.get("id")
     if reported_id and reported_id != attrs["harness.background_task_id"]:
         return False
     if task.get("status") in {"running", "pending", "queued"}:
         return False
-    outcome = parse_test_outcome(output)
-    status = _terminal_status(task, outcome, output)
+    arguments = attrs.get("tool.arguments")
+    command = arguments.get("command") if isinstance(arguments, dict) else None
+    outcome = parse_test_outcome(output, command=command)
+    status = _terminal_status(task, outcome, output, command)
     if status is None:
         return False
     if outcome:
@@ -97,19 +101,38 @@ def _single_file_read(words: list[str], path: str) -> bool:
 
 
 def _terminal_status(
-    task: dict[str, Any], outcome: dict[str, Any] | None, output: str
+    task: dict[str, Any], outcome: dict[str, Any] | None, output: str, command: object
 ) -> str | None:
+    final_line = output.rstrip().rpartition("\n")[2].strip()
+    status = None
     if task.get("status") in {"failed", "error"}:
-        return "error"
-    code = task.get("exitCode", task.get("exit_code"))
-    if type(code) is int:
-        return "ok" if code == 0 else "error"
-    if match := _EXIT_CODE.search(output):
-        return "ok" if int(match.group(1)) == 0 else "error"
-    if outcome and any(outcome.get(key) for key in ("failed", "errors", "failed_packages")):
-        return "error"
-    if task.get("status") == "completed" or (
-        outcome and (outcome.get("passed") or outcome.get("passed_packages"))
-    ):
-        return "ok"
-    return None
+        status = "error"
+    elif type(code := task.get("exitCode", task.get("exit_code"))) is int:
+        status = "ok" if code == 0 else "error"
+    elif match := _EXIT_CODE.fullmatch(final_line):
+        status = "ok" if int(match.group(1)) == 0 else "error"
+    else:
+        completed = task.get("status") == "completed"
+        if completed or (outcome and _has_final_runner_summary(outcome, final_line, command)):
+            if outcome and any(outcome.get(k) for k in ("failed", "errors", "failed_packages")):
+                status = "error"
+            elif completed or (outcome and outcome.get("passed")):
+                status = "ok"
+    return status
+
+
+def _has_final_runner_summary(outcome: dict[str, Any], final_line: str, command: object) -> bool:
+    """Recognize a complete runner summary at EOF, not an intermediate package line."""
+    # A single suite's footer cannot establish that an entire shell pipeline
+    # or command list finished. Wait for an explicit exit in those cases.
+    if not isinstance(command, str) or re.search(r"[;&|\n`$()]", command):
+        return False
+    runner = outcome.get("runner")
+    if runner == "go test":
+        return final_line == "FAIL"
+    if runner == "cargo test":
+        return False
+    if runner == "unittest":
+        return bool(_UNITTEST_FINAL.fullmatch(final_line))
+    final_outcome = parse_test_outcome(final_line)
+    return bool(final_outcome and final_outcome.get("runner") == runner)

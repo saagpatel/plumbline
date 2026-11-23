@@ -86,6 +86,23 @@ def test_build_prompt_surfaces_deterministic_bypass() -> None:
     assert "guard-denied" in prompt
 
 
+def test_build_prompt_scrubs_assembled_bypass_evidence() -> None:
+    fake_resource = "synthetic/credentialvalue"
+    trace = _bypass_trace()
+    for step in trace.steps:
+        if step.step_id == "t1":
+            step.attributes["tool.arguments"]["command"] = (
+                "curl https://rules.example.com/x --token '" + fake_resource + "'"
+            )
+        elif step.step_id == "t2":
+            step.attributes["tool.arguments"]["command"] = (
+                "wget https://rules.example.com/x --token '" + fake_resource + "'"
+            )
+    prompt = build_prompt(trace)
+    assert fake_resource not in prompt
+    assert "Re-attempted a guard-denied resource after a deny verdict" in prompt
+
+
 def _decision_trace() -> Trace:
     return Trace.from_dict(
         {
@@ -140,7 +157,9 @@ def test_recorded_bash_test_evidence_reaches_judge(
 ) -> None:
     command = "false && pytest toy; true"
     if summary:
-        command = "echo " + "x" * 260 + "; python -m pytest toy/test_widget.py | tail -1"
+        command = (
+            "python -m pytest toy/test_widget.py " + "nested/" * 40 + "test_other.py | tail -1"
+        )
     call = {"type": "tool_use", "id": "call", "name": "Bash", "input": {"command": command}}
     result = {"type": "tool_result", "tool_use_id": "call", "is_error": False}
     transcript = tmp_path / "toy.jsonl"
@@ -250,6 +269,7 @@ def test_judge_does_not_expand_command_display_for_test_runner() -> None:
     "command",
     [
         "AWS_SECRET_ACCESS_KEY=example pytest private-test.py",
+        'pytest private-test.py "$EXTRA_TEST"',
         "npm test -- private-test.js",
         "pnpm test -- private-test.js",
         "yarn test -- private-test.js",
@@ -263,6 +283,27 @@ def test_judge_hides_test_command_when_summary_is_missing(command: str) -> None:
         assert "example" not in prompt
     assert "command=" not in prompt
     assert "test outcome=unknown" in prompt
+
+
+def test_judge_keeps_pytest_filename_in_ordinary_command_preview() -> None:
+    prompt = _bash_prompt("cat pytest.ini")
+    assert "command=cat pytest.ini" in prompt
+    assert "test outcome=unknown" not in prompt
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "env 'DB_PASSWORD=two synthetic words with FAKE_TRAILING_MARKER' cmd",
+        'env "DB_PASSWORD=toy dog\'s word with FAKE_TRAILING_MARKER" cmd',
+        'env "DB_PASSWORD=toy \\"quoted\\" word with FAKE_TRAILING_MARKER" cmd',
+    ],
+)
+def test_judge_scrubs_whole_quoted_environment_value_before_preview(command: str) -> None:
+    prompt = _bash_prompt(command)
+    quote = command.split()[1][0]
+    assert f"command=env {quote}DB_PASSWORD=<redacted>{quote} cmd" in prompt
+    assert "FAKE_TRAILING_MARKER" not in prompt
 
 
 def test_judge_uses_only_validated_test_outcome_fields() -> None:
@@ -340,6 +381,7 @@ def test_judge_run_enriches_by_default_and_can_be_disabled() -> None:
                     "attributes": {
                         "gen_ai.tool.name": "Bash",
                         "tool.arguments": {"command": "pytest"},
+                        "test.outcome": {"runner": "pytest", "passed": 0, "failed": 1},
                     },
                 },
                 {
@@ -360,6 +402,7 @@ def test_judge_run_enriches_by_default_and_can_be_disabled() -> None:
                     "attributes": {
                         "gen_ai.tool.name": "Bash",
                         "tool.arguments": {"command": "pytest"},
+                        "test.outcome": {"runner": "pytest", "passed": 1, "failed": 0},
                     },
                 },
             ],

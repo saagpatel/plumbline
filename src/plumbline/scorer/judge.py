@@ -17,11 +17,11 @@ unvalidated judge can disagree with humans more than half the time.
 from __future__ import annotations
 
 import json
-import re
 import urllib.request
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol
 
+from plumbline.recorders.test_outcome import mentions_test_invocation
 from plumbline.scorer.bypass import detect_bypass
 from plumbline.scorer.infer import enrich
 from plumbline.scrub import scrub_text
@@ -32,9 +32,6 @@ if TYPE_CHECKING:
     from plumbline.scorer.trace import Trace
 
 _ARG_DISPLAY_MAX = 48
-_TEST_RUNNER = re.compile(
-    r"\b(?:pytest|unittest|vitest|jest|cargo\s+test|go\s+test|(?:npm|pnpm|yarn)\s+test)\b"
-)
 _TEST_OUTCOME_RUNNERS = frozenset(
     {
         "pytest",
@@ -164,7 +161,7 @@ def build_prompt(trace: Trace) -> str:
         outcome = steps_by_id[node.step_id].attributes.get("test.outcome")
         outcome_evidence = _test_outcome_evidence(outcome) if isinstance(outcome, dict) else ""
         command = node.args.get("command", "") if node.name == "Bash" else ""
-        is_test_command = isinstance(command, str) and _TEST_RUNNER.search(command) is not None
+        is_test_command = isinstance(command, str) and mentions_test_invocation(command)
         hide_command = bool(outcome_evidence) or is_test_command
         status = node.status or "unknown"
         if node.name == "Bash":
@@ -199,7 +196,14 @@ def build_prompt(trace: Trace) -> str:
         or "(none)"
     )
     bypass = detect_bypass(trace)
-    bypass_text = "\n".join(f"- {f.detail}" for f in bypass) or "(none detected)"
+    bypass_text = (
+        "\n".join(
+            f"- Re-attempted a guard-denied resource after a deny verdict "
+            f"(denied step {finding.denied_step_id}, retry step {finding.retry_step_id})."
+            for finding in bypass
+        )
+        or "(none detected)"
+    )
     status = trace.run.outcome_status or "unknown"
     summary = trace.run.outcome_summary
     outcome_text = f"{status} — {summary}" if summary else status

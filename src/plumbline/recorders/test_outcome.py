@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import re
+from collections import Counter
 
 _ANSI = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 _COUNTS = re.compile(r"(?P<count>\d+)\s+(?P<kind>passed|failed|skipped|errors?|todo|pending)")
+_PYTEST_KIND = r"passed|failed|skipped|errors?|deselected|xfailed|xpassed|warnings?"
 
 
 def _summary_counts(text: str) -> dict[str, int]:
@@ -23,16 +25,21 @@ def _summary_counts(text: str) -> dict[str, int]:
 
 
 def _pytest(output: str) -> dict[str, int | str] | None:
-    pattern = re.compile(
-        r"^\s*=*\s*(?P<counts>\d+\s+(?:passed|failed|skipped|errors?)(?:\s*,\s*"
-        r"\d+\s+(?:passed|failed|skipped|errors?))*)(?:,\s*\d+\s+warnings?)?"
-        r"\s+in\s+\d+(?:\.\d+)?s\s*=*\s*$",
-        re.MULTILINE,
+    field = rf"\d+[ \t]+(?:{_PYTEST_KIND})"
+    pattern = (
+        rf"^[ \t=]*(?P<counts>{field}(?:[ \t]*,[ \t]*{field})*)"
+        r"[ \t]+in[ \t]+\d+(?:\.\d+)?s(?:[ \t]+\(\d+:\d{2}:\d{2}\))?[ \t=]*$"
     )
-    matches = list(pattern.finditer(output))
+    matches = list(re.finditer(pattern, output, re.MULTILINE))
     if not matches:
         return None
-    return {"runner": "pytest", **_summary_counts(matches[-1].group("counts"))}
+    counts: Counter[str] = Counter(passed=0, failed=0, skipped=0, errors=0)
+    for match in matches:
+        for field_text in match["counts"].split(","):
+            value, kind = field_text.split()
+            if kind not in {"warning", "warnings"}:
+                counts["errors" if kind == "error" else kind] += int(value)
+    return {"runner": "pytest", **counts}
 
 
 def _test_line(output: str, runner: str) -> dict[str, int | str] | None:
@@ -43,22 +50,29 @@ def _test_line(output: str, runner: str) -> dict[str, int | str] | None:
     matches = list(re.finditer(pattern, output, re.MULTILINE))
     if not matches:
         return None
-    fields, total = matches[-1].groups()
-    if not all(_COUNTS.fullmatch(field.strip()) for field in re.split(r"[|,]", fields)):
-        return None
-    counts = _summary_counts(fields)
-    return {"runner": runner, **counts} if sum(counts.values()) == int(total) else None
+    counts: dict[str, int] = {"passed": 0, "failed": 0, "skipped": 0, "errors": 0}
+    for match in matches:
+        fields, total = match.groups()
+        if not all(_COUNTS.fullmatch(field.strip()) for field in re.split(r"[|,]", fields)):
+            return None
+        result_counts = _summary_counts(fields)
+        if sum(result_counts.values()) != int(total):
+            return None
+        for key, value in result_counts.items():
+            counts[key] += value
+    return {"runner": runner, **counts}
 
 
 def _unittest(output: str) -> dict[str, int | str] | None:
-    result = re.search(
-        r"^Ran (\d+) tests? in [\d.]+s\s*\n(OK|FAILED)(?: \(([^)\n]+)\))?[ \t]*$",
-        output,
-        re.MULTILINE,
+    results = list(
+        re.finditer(
+            r"^Ran (\d+) tests? in [\d.]+s\s*\n(OK|FAILED)(?: \(([^)\n]+)\))?[ \t]*$",
+            output,
+            re.MULTILINE,
+        )
     )
-    if not result:
+    if not results:
         return None
-    total, status, details = result.groups()
     counts: dict[str, int] = {"passed": 0, "failed": 0, "skipped": 0, "errors": 0}
     categories = {
         "failures": "failed",
@@ -67,14 +81,19 @@ def _unittest(output: str) -> dict[str, int | str] | None:
         "expected failures": "skipped",
         "unexpected successes": "failed",
     }
-    for field in details.split(", ") if details else ():
-        label, _, value = field.partition("=")
-        if label not in categories or not value.isdecimal():
+    for result in results:
+        total, status, details = result.groups()
+        result_counts = {"passed": 0, "failed": 0, "skipped": 0, "errors": 0}
+        for field in details.split(", ") if details else ():
+            label, _, value = field.partition("=")
+            if label not in categories or not value.isdecimal():
+                return None
+            result_counts[categories[label]] += int(value)
+        if (status == "FAILED") != bool(result_counts["failed"] or result_counts["errors"]):
             return None
-        counts[categories[label]] += int(value)
-    if (status == "FAILED") != bool(counts["failed"] or counts["errors"]):
-        return None
-    counts["passed"] = max(0, int(total) - sum(counts.values()))
+        result_counts["passed"] = max(0, int(total) - sum(result_counts.values()))
+        for key, value in result_counts.items():
+            counts[key] += value
     return {"runner": "unittest", **counts}
 
 
@@ -97,18 +116,27 @@ def _cargo(output: str) -> dict[str, int | str] | None:
     }
 
 
-def _go(output: str) -> dict[str, int | str] | None:
-    passed = re.findall(r"^ok[ \t]+\S+[ \t]+[\d.]+s[ \t]*$", output, re.MULTILINE)
+def _go(output: str, command: str | None) -> dict[str, int | str] | None:
+    passed = re.findall(r"^ok[ \t]+\S+[ \t]+(?:[\d.]+s|\(cached\))[ \t]*$", output, re.MULTILINE)
     failed = re.findall(
-        r"^FAIL[ \t]+\S+(?:[ \t]+(?:[\d.]+s|\[build failed\]))?[ \t]*$", output, re.MULTILINE
+        r"^FAIL[ \t]+\S+(?:[ \t]+(?:[\d.]+s|\[(?:build|setup) failed\]))?[ \t]*$",
+        output,
+        re.MULTILINE,
     )
+    final_failure = output.rstrip().rpartition("\n")[2].strip() == "FAIL"
     if not passed and not failed:
-        return None
+        go_command = isinstance(command, str) and re.match(
+            r"^\s*(?:\S*/)?go\s+test(?:\s|$)", command
+        )
+        if not (final_failure and go_command):
+            return None
     outcome: dict[str, int | str] = {
         "runner": "go test",
         "passed_packages": len(passed),
         "failed_packages": len(failed),
     }
+    if final_failure and not failed:
+        outcome["errors"] = 1  # Aggregate failure with no observed failed package.
     tests = re.findall(r"^--- (PASS|FAIL|SKIP): \S+ \([\d.]+s\)$", output, re.MULTILINE)
     if tests:
         outcome.update(
@@ -117,14 +145,23 @@ def _go(output: str) -> dict[str, int | str] | None:
     return outcome
 
 
-def parse_test_outcome(output: str) -> dict[str, int | str] | None:
+def parse_test_outcome(output: str, *, command: str | None = None) -> dict[str, int | str] | None:
     """Return runner name and summary counts, without preserving output content."""
     clean = _ANSI.sub("", output)
-    return (
-        _pytest(clean)
-        or _unittest(clean)
-        or _test_line(clean, "vitest")
-        or _test_line(clean, "jest")
-        or _cargo(clean)
-        or _go(clean)
+    parsed = (
+        _pytest(clean),
+        _unittest(clean),
+        _test_line(clean, "vitest"),
+        _test_line(clean, "jest"),
+        _cargo(clean),
+        _go(clean, command),
     )
+    outcomes = [outcome for outcome in parsed if outcome is not None]
+    if not outcomes:
+        return None
+    if len(outcomes) == 1:
+        return outcomes[0]
+    counts: Counter[str] = Counter()
+    for outcome in outcomes:
+        counts.update({key: value for key, value in outcome.items() if isinstance(value, int)})
+    return {"runner": "multiple", **counts}

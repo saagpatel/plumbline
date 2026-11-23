@@ -1,5 +1,8 @@
 """PII scrubber behavior."""
 
+import json
+
+from plumbline.recorders.claude_code import record_session
 from plumbline.scrub import scrub_obj, scrub_text
 
 
@@ -35,3 +38,26 @@ def test_scrub_obj_is_deep() -> None:
     # non-strings pass through untouched
     assert out["n"] == 3
     assert out["ok"] is True
+
+
+def test_hook_command_credentials_are_scrubbed_from_default_trace(tmp_path) -> None:
+    path = tmp_path / "synthetic.jsonl"
+    events = [
+        {"type": "user", "message": {"content": "toy"}},
+        {
+            "type": "system",
+            "subtype": "stop_hook_summary",
+            "hookInfos": [
+                {
+                    "name": "toy-hook",
+                    "event": "Stop",
+                    "command": "EXAMPLE_PASSWORD=not-a-secret toy",
+                }
+            ],
+        },
+    ]
+    path.write_text("\n".join(map(json.dumps, events)))
+    trace = record_session(path)
+    assert "not-a-secret" not in json.dumps(trace)
+    (entry,) = trace["steps"][0]["attributes"]["harness.hook.entries"]
+    assert (entry["name"], entry["event"]) == ("toy-hook", "Stop")

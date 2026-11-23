@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 from plumbline.scorer.bypass import detect_bypass
 from plumbline.scorer.infer import enrich
+from plumbline.scrub import scrub_text
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -110,7 +111,7 @@ class JudgeVerdict:
 def _short_args(args: Mapping[str, Any]) -> str:
     rendered = []
     for key, value in args.items():
-        text = str(value)
+        text = scrub_text(str(value))
         if key != "command":
             text = text[:48]
         elif len(text) > _COMMAND_DISPLAY_MAX:
@@ -169,7 +170,7 @@ def build_prompt(trace: Trace) -> str:
     status = trace.run.outcome_status or "unknown"
     summary = trace.run.outcome_summary
     outcome_text = f"{status} — {summary}" if summary else status
-    return _PROMPT.format(
+    prompt = _PROMPT.format(
         plan=plan,
         path=path_text,
         decisions=decision_text,
@@ -177,6 +178,7 @@ def build_prompt(trace: Trace) -> str:
         bypass=bypass_text,
         outcome=outcome_text,
     )
+    return scrub_text(prompt)
 
 
 def parse_verdict(raw: str) -> JudgeVerdict:

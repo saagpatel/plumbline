@@ -179,6 +179,28 @@ def test_build_prompt_keeps_unknown_status_and_bounds_non_command_args() -> None
     assert "shell status" not in prompt
 
 
+@pytest.mark.parametrize("default_recording", [True, False])
+def test_judge_scrubs_credentials_before_selecting_command_window(tmp_path, default_recording):
+    command = (
+        "echo " + "x" * 260 + "; EXAMPLE_PASSWORD=not-a-secret python -m pytest toy "
+        "--token 'invented option value' ghp_" + "invented" * 5
+    )
+    call = {"type": "tool_use", "name": "Bash", "id": "toy", "input": {"command": command}}
+    path = tmp_path / "synthetic.jsonl"
+    events = [
+        {"type": "user", "message": {"content": "Run with EXAMPLE_PASSWORD=fake-plan-value"}},
+        {"type": "assistant", "message": {"content": [call]}},
+    ]
+    path.write_text("\n".join(map(json.dumps, events)))
+    trace = record_session(path, scrub=default_recording)
+    prompt = build_prompt(Trace.from_dict(trace))
+    for marker in ("not-a-secret", "invented option value", "ghp_invented", "fake-plan-value"):
+        assert marker not in prompt
+        if default_recording:
+            assert marker not in json.dumps(trace)
+    assert "pytest toy" in prompt
+
+
 def test_parse_verdict_clean_json() -> None:
     v = parse_verdict(_GOOD)
     assert v.meta_decision_ok is True

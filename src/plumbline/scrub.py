@@ -21,10 +21,19 @@ from __future__ import annotations
 import re
 from typing import Any
 
+_CREDENTIAL = r"(?:password|passwd|token|secret|api[_-]?key)"
+# A credential-bearing assignment or long option, followed by one shell word.
+# Quoted and backslash-escaped spaces are part of the same value.
+_CREDENTIAL_VALUE = re.compile(
+    rf"(?i)(?P<label>\b(?:[\w]+_)?{_CREDENTIAL}=|--(?:[\w-]+-)?{_CREDENTIAL}(?:=|[ \t]+))"
+    r"""(?:\\[\s\S]|'[^']*(?:'|$)|"(?:\\[\s\S]|[^"\\])*(?:"|$)|[^\s\\'";|&()<>])+"""
+)
+
 # Ordered: specific shapes first. Token rules require a real separator after the
 # provider prefix so ordinary words ("skip_...", "patient-...", "pattern_...")
 # are NOT mistaken for secrets.
 _PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (_CREDENTIAL_VALUE, r"\g<label><redacted>"),
     (re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"), "<email>"),
     (re.compile(r"\b(?:sk|ghp|gho|ghs|ghu|ghr|xox[baprs])[-_][A-Za-z0-9._-]{16,}"), "<token>"),
     (re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._-]{16,}"), "<token>"),

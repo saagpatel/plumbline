@@ -8,6 +8,8 @@ from jsonschema import Draft202012Validator
 
 from plumbline.cli import _validate, main
 from plumbline.recorders.claude_code import load_jsonl, record_session
+from plumbline.scorer.judge import build_prompt
+from plumbline.scorer.trace import Trace
 
 FIXTURE = Path(__file__).parent / "fixtures" / "cc_session" / "sess.jsonl"
 SCHEMA = Path(__file__).parents[1] / "schema" / "plumbline-trace.schema.json"

@@ -229,6 +229,14 @@ def _tool_step(ev: JsonObj, block: JsonObj, sub_id: str | None, ts: str, block_i
     return step
 
 
+def _nonzero_integer_exit(value: object) -> bool:
+    if isinstance(value, bool):
+        return False
+    return (
+        isinstance(value, int) or (isinstance(value, float) and value.is_integer())
+    ) and value != 0
+
+
 def _merge_result(
     tool_steps: dict[str, JsonObj], block: JsonObj, ev: JsonObj, *, sole_result: bool = True
 ) -> None:
@@ -241,8 +249,7 @@ def _merge_result(
     elif block.get("is_error") or (
         sole_result
         and step["attributes"].get("tool.result.kind") == "bash"
-        and type(result.get("exitCode")) is int
-        and result["exitCode"] != 0
+        and _nonzero_integer_exit(result.get("exitCode"))
     ):
         step["status"] = "error"
     else:

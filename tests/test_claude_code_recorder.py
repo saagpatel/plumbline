@@ -353,7 +353,9 @@ def test_bash_invocation_needs_a_result_for_success(tmp_path, completed):
     assert f"Bash(command=npm test) -> {status}" in build_prompt(Trace.from_dict(trace))
 
 
-@pytest.mark.parametrize(("exit_code", "expected"), [(0, "ok"), (7, "error")])
+@pytest.mark.parametrize(
+    ("exit_code", "expected"), [(0, "ok"), (7, "error"), (7.0, "error"), (True, "ok")]
+)
 def test_single_bash_result_uses_its_recorded_exit(tmp_path, exit_code, expected):
     base = {"sessionId": "fixture", "timestamp": "2026-01-01T00:00:00Z"}
     call = {"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "npm test"}}
@@ -374,3 +376,32 @@ def test_single_bash_result_uses_its_recorded_exit(tmp_path, exit_code, expected
     (tool,) = steps_of_kind(trace, "tool_call")
     assert tool["status"] == expected
     assert f"Bash(command=npm test) -> {expected}" in build_prompt(Trace.from_dict(trace))
+
+
+def test_batched_bash_exit_stays_with_its_flagged_result(tmp_path):
+    calls = [
+        {"id": k, "type": "tool_use", "name": "Bash", "input": {"command": "npm test"}}
+        for k in ("first", "second")
+    ]
+    blocks = [
+        {"type": "tool_result", "tool_use_id": k, "content": "fixture", "is_error": k == "first"}
+        for k in ("first", "second")
+    ]
+    base = {"sessionId": "fixture", "timestamp": "2026-01-01T00:00:00Z"}
+    rows = [
+        {**base, "type": "assistant", "uuid": "a", "message": {"content": calls}},
+        {
+            **base,
+            "type": "user",
+            "uuid": "r",
+            "message": {"content": blocks},
+            "toolUseResult": {"exitCode": 7},
+        },
+    ]
+    session = tmp_path / "fixture.jsonl"
+    session.write_text("\n".join(json.dumps(row) for row in rows))
+    trace = record_session(session)
+    assert {s["step_id"]: s["status"] for s in steps_of_kind(trace, "tool_call")} == {
+        "first": "error",
+        "second": "ok",
+    }

@@ -312,6 +312,8 @@ def _blocking_identities(events: list[JsonObj]) -> list[tuple[str, str] | None]:
 def _agreed_blocker(identities: set[tuple[str | None, str | None]]) -> tuple[str, str]:
     names = {name for name, _ in identities if name is not None}
     kinds = {kind for _, kind in identities if kind is not None}
+    if len(names) == 1 and not kinds:
+        return next(iter(names)), "unknown"
     if len(names) == 1 and len(kinds) == 1:
         candidate = (next(iter(names)), next(iter(kinds)))
         if candidate in identities:

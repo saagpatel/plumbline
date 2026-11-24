@@ -85,3 +85,30 @@ def test_conflicting_blockers_preserve_deny_without_naming_a_hook(tmp_path):
             assert attrs.get("harness.hook.prevented_continuation") is details.get(
                 "preventedContinuation"
             )
+
+
+def test_named_receipt_stays_with_its_source_file_without_an_event(tmp_path):
+    summary = {
+        "type": "system",
+        "subtype": "stop_hook_summary",
+        "sessionId": "session",
+        "agentId": "agent",
+        "toolUseID": "same",
+        "preventedContinuation": True,
+    }
+    receipt = {
+        "type": "attachment",
+        "sessionId": "session",
+        "agentId": "agent",
+        "attachment": {"type": "hook_blocking_error", "toolUseID": "same", "hookName": "observed"},
+    }
+    path = tmp_path / "main.jsonl"
+    path.write_text(json.dumps({**summary, "uuid": "main-summary"}))
+    side = tmp_path / "main" / "subagents" / "side.jsonl"
+    side.parent.mkdir(parents=True)
+    side.write_text("\n".join(map(json.dumps, [{**summary, "uuid": "side-summary"}, receipt])))
+    trace = record_session(path)
+    hooks = {s["step_id"]: s["attributes"] for s in trace["steps"] if s["kind"] == "hook"}
+    assert hooks["main-summary"]["harness.hook.name"] == "unknown"
+    assert hooks["side-summary"]["harness.hook.name"] == "observed"
+    assert hooks["side-summary"]["harness.hook.event"] == "unknown"

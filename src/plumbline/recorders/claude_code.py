@@ -129,9 +129,9 @@ def record_session(  # noqa: C901, PLR0912 - linear event dispatcher; clearer fl
                     if block.get("id"):
                         tool_steps[block["id"]] = step
         elif etype == "user":
-            for block in _content(ev):
-                if block.get("type") == "tool_result":
-                    _merge_result(tool_steps, block, ev)
+            results = [block for block in _content(ev) if block.get("type") == "tool_result"]
+            for block in results:
+                _merge_result(tool_steps, block, ev, sole_result=len(results) == 1)
         elif etype == "system":
             if step := _system_step(ev, sub_id, ts, idx):
                 steps.append(step)
@@ -229,14 +229,28 @@ def _tool_step(ev: JsonObj, block: JsonObj, sub_id: str | None, ts: str, block_i
     return step
 
 
-def _merge_result(tool_steps: dict[str, JsonObj], block: JsonObj, ev: JsonObj) -> None:
+def _nonzero_integer_exit(value: object) -> bool:
+    if isinstance(value, bool):
+        return False
+    return (
+        isinstance(value, int) or (isinstance(value, float) and value.is_integer())
+    ) and value != 0
+
+
+def _merge_result(
+    tool_steps: dict[str, JsonObj], block: JsonObj, ev: JsonObj, *, sole_result: bool = True
+) -> None:
     step = tool_steps.get(block.get("tool_use_id", ""))
     if step is None:
         return
     result = _as_dict(ev.get("toolUseResult"))
     if result.get("interrupted"):
         step["status"] = "interrupted"
-    elif block.get("is_error"):
+    elif block.get("is_error") or (
+        sole_result
+        and step["attributes"].get("tool.result.kind") == "bash"
+        and _nonzero_integer_exit(result.get("exitCode"))
+    ):
         step["status"] = "error"
     else:
         step["status"] = "ok"

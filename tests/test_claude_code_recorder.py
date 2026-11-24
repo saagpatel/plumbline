@@ -351,3 +351,26 @@ def test_bash_invocation_needs_a_result_for_success(tmp_path, completed):
     assert tool.get("status") == ("ok" if completed else None)
     status = "ok" if completed else "unknown"
     assert f"Bash(command=npm test) -> {status}" in build_prompt(Trace.from_dict(trace))
+
+
+@pytest.mark.parametrize(("exit_code", "expected"), [(0, "ok"), (7, "error")])
+def test_single_bash_result_uses_its_recorded_exit(tmp_path, exit_code, expected):
+    base = {"sessionId": "fixture", "timestamp": "2026-01-01T00:00:00Z"}
+    call = {"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "npm test"}}
+    result = {"type": "tool_result", "tool_use_id": "t1", "is_error": False, "content": "2 passed"}
+    rows = [
+        {**base, "type": "assistant", "uuid": "a1", "message": {"content": [call]}},
+        {
+            **base,
+            "type": "user",
+            "uuid": "r1",
+            "toolUseResult": {"exitCode": exit_code},
+            "message": {"content": [result]},
+        },
+    ]
+    session = tmp_path / "fixture.jsonl"
+    session.write_text("\n".join(json.dumps(row) for row in rows))
+    trace = record_session(session)
+    (tool,) = steps_of_kind(trace, "tool_call")
+    assert tool["status"] == expected
+    assert f"Bash(command=npm test) -> {expected}" in build_prompt(Trace.from_dict(trace))

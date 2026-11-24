@@ -8,6 +8,8 @@ from jsonschema import Draft202012Validator
 
 from plumbline.cli import _validate, main
 from plumbline.recorders.claude_code import load_jsonl, record_session
+from plumbline.scorer.judge import build_prompt
+from plumbline.scorer.trace import Trace
 
 FIXTURE = Path(__file__).parent / "fixtures" / "cc_session" / "sess.jsonl"
 SCHEMA = Path(__file__).parents[1] / "schema" / "plumbline-trace.schema.json"
@@ -332,3 +334,20 @@ def test_cli_record_writes_validated_output(tmp_path: Path) -> None:
     text = out.read_text()
     assert json.loads(text)["plumbline_version"] == "0.1.0"
     assert "/Users/example" not in text
+
+
+@pytest.mark.parametrize("completed", [False, True])
+def test_bash_invocation_needs_a_result_for_success(tmp_path, completed):
+    call = {"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "npm test"}}
+    base = {"sessionId": "fixture", "timestamp": "2026-01-01T00:00:00Z"}
+    rows = [{**base, "uuid": "a1", "type": "assistant", "message": {"content": [call]}}]
+    if completed:
+        result = {"type": "tool_result", "tool_use_id": "t1", "content": "done", "is_error": False}
+        rows.append({**base, "uuid": "r1", "type": "user", "message": {"content": [result]}})
+    session = tmp_path / "fixture.jsonl"
+    session.write_text("\n".join(json.dumps(row) for row in rows))
+    trace = record_session(session)
+    (tool,) = steps_of_kind(trace, "tool_call")
+    assert tool.get("status") == ("ok" if completed else None)
+    status = "ok" if completed else "unknown"
+    assert f"Bash(command=npm test) -> {status}" in build_prompt(Trace.from_dict(trace))

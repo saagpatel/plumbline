@@ -224,7 +224,7 @@ def _tool_step(ev: JsonObj, block: JsonObj, sub_id: str | None, ts: str, block_i
         }
         kind = "tool_call"
     step = _base_step(block_id, kind, ev, sub_id, ts)
-    step["status"] = "ok"
+    step["status"] = None
     step["attributes"] = attrs
     return step
 

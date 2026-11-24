@@ -117,7 +117,7 @@ def build_prompt(trace: Trace) -> str:
     path = trace.path()
     path_text = (
         "\n".join(
-            f"{i}. {node.name}({_short_args(node.args)}) -> {node.status or 'ok'}"
+            f"{i}. {node.name}({_short_args(node.args)}) -> {node.status or 'unknown'}"
             for i, node in enumerate(path, start=1)
         )
         or "(no tool or agent actions)"

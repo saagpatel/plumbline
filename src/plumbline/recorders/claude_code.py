@@ -200,7 +200,7 @@ def _llm_step(ev: JsonObj, sub_id: str | None, ts: str, idx: int) -> JsonObj:
         attrs["agent.reasoning"] = True
     step = _base_step(ev.get("uuid") or f"ev{idx}", "llm", ev, sub_id, ts)
     step["ended_at"] = ev.get("timestamp")
-    step["status"] = "ok"
+    step["status"] = "error" if ev.get("isApiErrorMessage") is True else "ok"
     step["attributes"] = attrs
     return step
 

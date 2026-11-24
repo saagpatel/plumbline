@@ -102,8 +102,11 @@ def record_session(  # noqa: C901, PLR0912 - linear event dispatcher; clearer fl
     """
     main_path = Path(main_path)
     events = load_jsonl(main_path)
+    blockers = _blocking_identities(events)
     for sub_file in _subagent_files(main_path):
-        events.extend(load_jsonl(sub_file))
+        rows = load_jsonl(sub_file)
+        blockers.extend(_blocking_identities(rows))
+        events.extend(rows)
 
     run = _build_run(events)
     steps: list[JsonObj] = []
@@ -133,7 +136,7 @@ def record_session(  # noqa: C901, PLR0912 - linear event dispatcher; clearer fl
             for block in results:
                 _merge_result(tool_steps, block, ev, sole_result=len(results) == 1)
         elif etype == "system":
-            if step := _system_step(ev, sub_id, ts, idx):
+            if step := _system_step(ev, sub_id, ts, idx, blockers[idx]):
                 steps.append(step)
         elif etype in ("permission-mode", "mode"):
             mode_seq += 1
@@ -263,7 +266,48 @@ def _merge_result(
             step["attributes"]["agent.total_tokens"] = result["totalTokens"]
 
 
-def _system_step(ev: JsonObj, sub_id: str | None, ts: str, idx: int) -> JsonObj | None:
+def _blocking_identities(events: list[JsonObj]) -> list[tuple[str, str] | None]:
+    """Match a unique blocking receipt to a unique summary in this input file."""
+    matches: dict[tuple, set[tuple[str, str]]] = {}
+    summaries: dict[tuple, list[int]] = {}
+    blockers: list[tuple[str, str] | None] = [None] * len(events)
+    for index, event in enumerate(events):
+        block = _as_dict(event.get("attachment"))
+        is_attachment = (
+            event.get("type") == "attachment" and block.get("type") == "hook_blocking_error"
+        )
+        is_summary = event.get("type") == "system" and event.get("subtype") == "stop_hook_summary"
+        if not (is_attachment or is_summary):
+            continue
+        outer = event.get("toolUseID")
+        inner = block.get("toolUseID") if is_attachment else None
+        if inner is not None and outer is not None and inner != outer:
+            continue
+        target = inner if inner is not None else outer
+        session, agent = event.get("sessionId"), event.get("agentId")
+        if (
+            not isinstance(target, str)
+            or not target.strip()
+            or any(v is not None and not isinstance(v, str) for v in (session, agent))
+        ):
+            continue
+        key = (session, agent, target)
+        if is_summary:
+            summaries.setdefault(key, []).append(index)
+        else:
+            name, kind = block.get("hookName"), block.get("hookEvent")
+            if isinstance(name, str) and name.strip() and isinstance(kind, str) and kind.strip():
+                matches.setdefault(key, set()).add((name, kind))
+    for key, positions in summaries.items():
+        identities = matches.get(key, set())
+        if len(positions) == 1 and len(identities) == 1:
+            blockers[positions[0]] = next(iter(identities))
+    return blockers
+
+
+def _system_step(
+    ev: JsonObj, sub_id: str | None, ts: str, idx: int, blocker: tuple[str, str] | None = None
+) -> JsonObj | None:
     subtype = ev.get("subtype") or ""
     if "compact" in subtype or ev.get("isCompactSummary"):
         meta = _as_dict(ev.get("compactMetadata"))
@@ -276,7 +320,12 @@ def _system_step(ev: JsonObj, sub_id: str | None, ts: str, idx: int) -> JsonObj 
         step["attributes"] = attrs
         return step
 
-    if ev.get("hookInfos") or ev.get("preventedContinuation") is not None or ev.get("hookErrors"):
+    if (
+        blocker
+        or ev.get("hookInfos")
+        or ev.get("preventedContinuation") is not None
+        or ev.get("hookErrors")
+    ):
         infos = ev.get("hookInfos") or []
         info = _as_dict(infos[0]) if infos else {}
         prevented = bool(ev.get("preventedContinuation"))
@@ -287,6 +336,9 @@ def _system_step(ev: JsonObj, sub_id: str | None, ts: str, idx: int) -> JsonObj 
             "harness.hook.event": info.get("event", subtype or "unknown"),
             "harness.hook.prevented_continuation": prevented,
         }
+        if blocker is not None:
+            attrs["harness.hook.name"], attrs["harness.hook.event"] = blocker
+            attrs["harness.hook.verdict"] = "deny"
         if ev.get("toolUseID"):
             attrs["harness.hook.target_step_id"] = ev["toolUseID"]
         step = _base_step(ev.get("uuid") or f"sys{idx}", "hook", ev, sub_id, ts)

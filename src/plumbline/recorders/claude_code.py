@@ -268,7 +268,7 @@ def _merge_result(
 
 def _blocking_identities(events: list[JsonObj]) -> list[tuple[str, str] | None]:
     """Match a unique blocking receipt to a unique summary in this input file."""
-    matches: dict[tuple, set[tuple[str, str]]] = {}
+    matches: dict[tuple, set[tuple[str | None, str | None]]] = {}
     summaries: dict[tuple, list[int]] = {}
     blockers: list[tuple[str, str] | None] = [None] * len(events)
     for index, event in enumerate(events):
@@ -296,13 +296,27 @@ def _blocking_identities(events: list[JsonObj]) -> list[tuple[str, str] | None]:
             summaries.setdefault(key, []).append(index)
         else:
             name, kind = block.get("hookName"), block.get("hookEvent")
-            if isinstance(name, str) and name.strip() and isinstance(kind, str) and kind.strip():
-                matches.setdefault(key, set()).add((name, kind))
+            matches.setdefault(key, set()).add(
+                (
+                    name if isinstance(name, str) and name.strip() else None,
+                    kind if isinstance(kind, str) and kind.strip() else None,
+                )
+            )
     for key, positions in summaries.items():
-        identities = matches.get(key, set())
-        if len(positions) == 1 and len(identities) == 1:
-            blockers[positions[0]] = next(iter(identities))
+        identities = matches.get(key)
+        if len(positions) == 1 and identities:
+            blockers[positions[0]] = _agreed_blocker(identities)
     return blockers
+
+
+def _agreed_blocker(identities: set[tuple[str | None, str | None]]) -> tuple[str, str]:
+    names = {name for name, _ in identities if name is not None}
+    kinds = {kind for _, kind in identities if kind is not None}
+    if len(names) == 1 and len(kinds) == 1:
+        candidate = (next(iter(names)), next(iter(kinds)))
+        if candidate in identities:
+            return candidate
+    return ("unknown", "unknown")
 
 
 def _system_step(

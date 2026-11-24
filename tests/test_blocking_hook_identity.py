@@ -50,3 +50,38 @@ def test_blocking_hook_is_named_by_its_own_attachment(tmp_path):
     (hook,) = [step for step in trace["steps"] if step["kind"] == "hook"]
     assert hook["attributes"]["harness.hook.verdict"] == "deny"
     assert "harness.hook.prevented_continuation" not in hook["attributes"]
+
+
+def test_conflicting_blockers_preserve_deny_without_naming_a_hook(tmp_path):
+    path = tmp_path / "conflict.jsonl"
+    summary = {"type": "system", "subtype": "stop_hook_summary", "uuid": "hook", "toolUseID": "t"}
+
+    def block(name, event):
+        return {
+            "type": "attachment",
+            "attachment": {
+                "type": "hook_blocking_error",
+                "toolUseID": "t",
+                "hookName": name,
+                "hookEvent": event,
+            },
+        }
+
+    for details in (
+        {},
+        {"hookInfos": [{"name": "first listed"}]},
+        {"preventedContinuation": False},
+    ):
+        for other_event in ("Stop", None):
+            rows = [{**summary, **details}, block("one", "Stop"), block("two", other_event)]
+            path.write_text("\n".join(map(json.dumps, rows)))
+            trace = record_session(path)
+            (attrs,) = [s["attributes"] for s in trace["steps"] if s["kind"] == "hook"]
+            assert attrs["harness.hook.verdict"] == "deny"
+            assert (attrs["harness.hook.name"], attrs["harness.hook.event"]) == (
+                "unknown",
+                "unknown",
+            )
+            assert attrs.get("harness.hook.prevented_continuation") is details.get(
+                "preventedContinuation"
+            )

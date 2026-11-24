@@ -336,9 +336,6 @@ def test_cli_record_writes_validated_output(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize("completed", [False, True])
 def test_bash_invocation_needs_a_result_for_success(tmp_path, completed):
-    from plumbline.scorer.judge import build_prompt
-    from plumbline.scorer.trace import Trace
-
     call = {"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "npm test"}}
     base = {"sessionId": "fixture", "timestamp": "2026-01-01T00:00:00Z"}
     rows = [{**base, "uuid": "a1", "type": "assistant", "message": {"content": [call]}}]

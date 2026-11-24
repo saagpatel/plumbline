@@ -337,6 +337,8 @@ def _system_step(
             "harness.hook.prevented_continuation": prevented,
         }
         if blocker is not None:
+            if not isinstance(ev.get("preventedContinuation"), bool):
+                attrs.pop("harness.hook.prevented_continuation")
             attrs["harness.hook.name"], attrs["harness.hook.event"] = blocker
             attrs["harness.hook.verdict"] = "deny"
         if ev.get("toolUseID"):

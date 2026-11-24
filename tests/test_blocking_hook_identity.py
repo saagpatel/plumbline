@@ -28,18 +28,25 @@ def test_blocking_hook_is_named_by_its_own_attachment(tmp_path):
         }
 
     first = attachment("call", "observed")
-    for records in (
-        [summary, first, attachment("other", "different")],
-        [first, summary],
-        [summary, first, attachment("call", "ambiguous")],
+    for records, expected in (
+        ([summary, first, attachment("other", "different")], "observed"),
+        ([first, summary], "observed"),
+        ([summary, first, attachment("call", "ambiguous")], "unknown"),
+        ([summary, {**first, "sessionId": "other"}], "unknown"),
+        ([summary, {**first, "agentId": "other"}], "unknown"),
     ):
         path.write_text("\n".join(map(json.dumps, records)))
         trace = record_session(path)
         (attrs,) = [s["attributes"] for s in trace["steps"] if s["kind"] == "hook"]
-        assert attrs["harness.hook.name"] == (
-            "unknown"
-            if records[-1].get("attachment", {}).get("hookName") == "ambiguous"
-            else "observed"
-        )
+        assert attrs["harness.hook.name"] == expected
         assert attrs["harness.hook.verdict"] == "deny"
         assert "unrelated-private-fixture" not in json.dumps(trace)
+
+    without_prevention = {
+        key: value for key, value in summary.items() if key != "preventedContinuation"
+    }
+    path.write_text("\n".join(map(json.dumps, [without_prevention, first])))
+    trace = record_session(path)
+    (hook,) = [step for step in trace["steps"] if step["kind"] == "hook"]
+    assert hook["attributes"]["harness.hook.verdict"] == "deny"
+    assert "harness.hook.prevented_continuation" not in hook["attributes"]
